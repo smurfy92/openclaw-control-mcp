@@ -8,9 +8,18 @@ import {
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { GatewayClient } from "./gateway/client.js";
 import { Store } from "./gateway/store.js";
+import { buildAgentsTools } from "./tools/agents.js";
+import { buildChannelsTools } from "./tools/channels.js";
+import { buildChatTools } from "./tools/chat.js";
 import { buildCronTools, type ToolDef } from "./tools/cron.js";
 import { buildDeviceTools } from "./tools/device.js";
+import { buildIntrospectTools } from "./tools/introspect.js";
+import { buildLogsTools } from "./tools/logs.js";
+import { buildModelsTools } from "./tools/models.js";
+import { buildSessionsTools } from "./tools/sessions.js";
 import { buildSetupTools } from "./tools/setup.js";
+import { buildStatusTools } from "./tools/status.js";
+import { buildUsageTools } from "./tools/usage.js";
 
 const ENV_URL = process.env.OPENCLAW_GATEWAY_URL?.trim() || undefined;
 const ENV_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
@@ -92,6 +101,15 @@ const setupTools = buildSetupTools(store, {
 const tools: ToolDef[] = [
   ...setupTools,
   ...buildDeviceTools(clientShim, store),
+  ...buildIntrospectTools(clientShim, store),
+  ...buildStatusTools(clientShim),
+  ...buildSessionsTools(clientShim),
+  ...buildChatTools(clientShim),
+  ...buildLogsTools(clientShim),
+  ...buildAgentsTools(clientShim),
+  ...buildChannelsTools(clientShim),
+  ...buildModelsTools(clientShim),
+  ...buildUsageTools(clientShim),
   ...buildCronTools(clientShim),
 ];
 const toolMap = new Map(tools.map((t) => [t.name, t]));
