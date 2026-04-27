@@ -1,4 +1,4 @@
-# openclaw-claw-mcp
+# openclaw-control-mcp
 
 MCP server bridging Claude Code (or any MCP client) to the OpenClaw gateway management plane (cron, sessions, agents, channels) via WebSocket JSON-RPC.
 
@@ -6,24 +6,33 @@ The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrap
 
 ## Status
 
-**0.1.0 / preview.** Six cron tools registered: `openclaw_cron_list`, `_status`, `_run`, `_runs`, `_remove`, `_add`. WS connect handshake is fully working against a managed Hostinger gateway (verified `2026.4.12`). The transport (`src/gateway/client.ts`) and tool registry (`src/tools/cron.ts`) are designed to be extended to sessions, agents, channels, skills, instances, and logs.
+**0.2.0 / preview.** Tools registered:
+- Setup: `openclaw_setup`, `openclaw_setup_show`, `openclaw_setup_clear`.
+- Device: `openclaw_device_status`, `openclaw_device_pair_list`, `openclaw_device_pair_approve`, `openclaw_device_pair_reject`.
+- Cron: `openclaw_cron_list`, `_status`, `_run`, `_runs`, `_remove`, `_add` (need `operator.read` scope).
 
-> **Known limitation — token-only sessions have no scopes.** The gateway grants `role: "operator"` on a token-only connect, but **no `operator.read` / `operator.write` / `operator.admin` scopes**. As a result, every `cron.*` (and any read-side method) returns `INVALID_REQUEST: missing scope: operator.read`. To get scopes, the client must enroll an Ed25519 device identity that you approve once via the Control panel. See [Roadmap](#roadmap) — **device pairing is the next PR**.
+WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
-What works today end-to-end:
-- WS upgrade + connect handshake (correct frame format, UUID request ids, full scope-less hello-ok response).
-- `health` / `status` / unscoped methods (the `features.methods` list is returned and inspectable).
-- Tool registry, JSON Schema (draft 2020-12 compatible), MCP stdio loop.
+The wire format (frame types, field names, signing canonicalisation, scopes) was reverse-engineered from the minified Control panel bundle (`/api-docs/assets/index-*.js`) and cross-checked against `openclaw/openclaw/scripts/dev/gateway-smoke.ts`. It is **not officially documented**. Behaviour may change without notice if OpenClaw updates the gateway.
 
-What does **not** work yet:
-- Anything scoped (`cron.*`, `sessions.*`, `agents.*`, `channels.*`, …) until device pairing lands.
+## First-run / pairing flow
 
-The wire format (frame types, field names, scopes) was reverse-engineered from the minified Control panel bundle (`/api-docs/assets/index-*.js`) and cross-checked against the official `scripts/dev/gateway-smoke.ts` in `openclaw/openclaw`. It is **not officially documented**. Behaviour may change without notice if OpenClaw updates the gateway.
+1. Start the wrapper (Claude Code does this automatically once registered in `~/.claude.json`).
+2. Ask Claude to run `openclaw_device_status`. The first call:
+   - generates an Ed25519 keypair and persists it to disk,
+   - opens a WS to the gateway,
+   - sends a signed `connect` frame,
+   - the gateway replies with `PAIRING_REQUIRED` and a `requestId`,
+   - the tool returns `{ pendingPairing: { requestId }, nextStep: "approve in Control panel…" }`.
+3. Open the OpenClaw Control panel → **Devices** tab → approve the request whose id matches.
+4. Ask Claude to run `openclaw_device_status` again. This time the gateway accepts the connect, returns `auth.deviceToken` in `hello-ok`, the wrapper caches it, and `paired: true` plus the granted scopes appear in the response.
+5. From then on, scoped tools (`openclaw_cron_list`, `_status`, …) work normally.
 
 ## Install
 
 ```bash
-cd /path/to/openclaw-claw-mcp
+git clone https://github.com/smurfy92/openclaw-control-mcp.git
+cd openclaw-control-mcp
 npm install
 npm run build
 ```
@@ -42,16 +51,34 @@ Find it from your browser:
 
 ## Use with Claude Code
 
-Add an entry to `~/.claude.json` next to the existing `openclaw` server:
+### Recommended: register, then configure in chat
+
+The slickest path — no `~/.claude.json` editing, no env vars:
+
+```bash
+claude mcp add openclaw-control -- node /absolute/path/to/openclaw-control-mcp/dist/index.js
+```
+
+Restart Claude Code, then in chat:
+
+> "Configure OpenClaw with gateway `wss://openclaw-xxx.srv.hstgr.cloud` and token `<your-token>`"
+
+Claude calls `openclaw_setup({ gatewayUrl, gatewayToken })`, the values get persisted to `~/.config/openclaw-control-mcp/store.json` (mode `0600`). The next call to `openclaw_device_status` triggers the WS handshake and pairing flow.
+
+`openclaw_setup_show` reports the effective configuration, `openclaw_setup_clear` wipes the persisted config (without touching the device identity / token).
+
+### Alternative: env-var-driven
+
+If you prefer env vars (they take precedence over the stored config), edit `~/.claude.json`:
 
 ```json
-"openclaw-claw": {
+"openclaw-control": {
   "type": "stdio",
   "command": "node",
-  "args": ["/Users/<you>/path/to/openclaw-claw-mcp/dist/index.js"],
+  "args": ["/absolute/path/to/openclaw-control-mcp/dist/index.js"],
   "env": {
-    "OPENCLAW_GATEWAY_URL": "ws://127.0.0.1:18789",
-    "OPENCLAW_GATEWAY_TOKEN": "<your gateway token>",
+    "OPENCLAW_GATEWAY_URL": "wss://openclaw-xxx.srv.hstgr.cloud",
+    "OPENCLAW_GATEWAY_TOKEN": "<your-token>",
     "OPENCLAW_TIMEOUT_MS": "30000"
   }
 }
@@ -68,8 +95,28 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 | `OPENCLAW_GATEWAY_PASSWORD` | optional | Extra password (some gateway configs require it) |
 | `OPENCLAW_TIMEOUT_MS` | optional | Connect / request timeout (default 30000) |
 | `OPENCLAW_DEBUG` | optional | Set to `1` to log every WS frame to stderr |
+| `OPENCLAW_CONTROL_HOME` | optional | Override the directory used to persist `store.json` (defaults to `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/`). The legacy `OPENCLAW_CLAW_HOME` is still read as a fallback. |
 
 ## Tools
+
+### Setup (no scopes required)
+
+| Tool | Notes |
+|---|---|
+| `openclaw_setup` | Persist `{ gatewayUrl, gatewayToken, gatewayPassword? }` to local config. Closes any active connection so the next call uses the new credentials. |
+| `openclaw_setup_show` | Report effective config (env vs store), without printing tokens. |
+| `openclaw_setup_clear` | Wipe persisted gateway config. Device identity + tokens are kept. |
+
+### Pairing / device
+
+| Tool | JSON-RPC method | Notes |
+|---|---|---|
+| `openclaw_device_status` | (local + `connect`) | Reports local device id, pending pairing request id, paired state, granted scopes. Re-runs a connect each call so it doubles as "retry pairing after approval". |
+| `openclaw_device_pair_list` | `device.pair.list` | List pending + paired devices on the gateway. Requires `operator.read`. |
+| `openclaw_device_pair_approve` | `device.pair.approve` | Approve a pending request by id. Requires `operator.write`. |
+| `openclaw_device_pair_reject` | `device.pair.reject` | Reject a pending request by id. |
+
+### Cron (require operator.read / operator.write)
 
 | Tool | JSON-RPC method | Notes |
 |---|---|---|
@@ -82,20 +129,6 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 
 ## Roadmap
 
-### Next PR — Ed25519 device pairing (unblocks scopes)
-
-The gateway only grants `operator.read/write/admin` to clients that present a paired device identity. Implementation outline:
-
-1. Generate a long-lived Ed25519 keypair on first run, persist at `${XDG_CONFIG_HOME:-~/.config}/openclaw-claw-mcp/device.json` (`{ deviceId, publicKey, privateKey }`).
-2. On `connect`, attach `device: { id, publicKey, signature, signedAt, nonce }` where `signature = ed25519(canonicalize({deviceId, clientId, clientMode, role, scopes, signedAtMs, token, nonce}))`. The `nonce` comes from the `connect.challenge` event the gateway sends right after WS open.
-3. First connect → server returns a pending pair request. Surface the device id to the user so they can approve it once via the Control panel (`device.pair.approve`). Server response should then carry a `deviceToken` with scopes.
-4. Persist the device token alongside the keypair, send it as `auth.deviceToken` on subsequent connects.
-5. Handle `AUTH_DEVICE_TOKEN_MISMATCH` / `recommendedNextStep: retry_with_device_token` by clearing the cached token and re-pairing.
-
-Reference: `nt(...)`, `Mn(...)`, `Gn(...)`, `Kn(...)` in `assets/index-*.js` (Control panel bundle).
-
-### Then
-
 - Sessions (`sessions.list/get/delete`)
 - Agents (`agents.list/files/skills`)
 - Channels (`channels.list/send/broadcast`)
@@ -103,6 +136,14 @@ Reference: `nt(...)`, `Mn(...)`, `Gn(...)`, `Kn(...)` in `assets/index-*.js` (Co
 - Instances (`instances.list/usage`)
 - Logs (`logs.tail/search`)
 - Auto-reconnect with backoff (currently single-shot — Claude Code respawns the stdio process on demand)
+
+## Migrating from openclaw-claw-mcp (early adopters)
+
+If you used the wrapper under its previous name (`openclaw-claw-mcp`):
+- The Store automatically reads `~/.config/openclaw-claw-mcp/store.json` as a fallback when the new path is empty, so your paired device token keeps working.
+- On the next successful connect, the new path (`~/.config/openclaw-control-mcp/store.json`) is created. You can then delete the old directory.
+- Update the entry name in `~/.claude.json` from `openclaw-claw` to `openclaw-control` (purely cosmetic — only changes the tool prefix `mcp__openclaw-control__*`).
+- The local working dir / build output keeps the same path you cloned to; nothing else needs moving.
 
 ## Caveats
 

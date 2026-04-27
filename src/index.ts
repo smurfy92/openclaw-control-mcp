@@ -7,11 +7,14 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { GatewayClient } from "./gateway/client.js";
+import { Store } from "./gateway/store.js";
 import { buildCronTools, type ToolDef } from "./tools/cron.js";
+import { buildDeviceTools } from "./tools/device.js";
+import { buildSetupTools } from "./tools/setup.js";
 
-const URL = process.env.OPENCLAW_GATEWAY_URL;
-const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
-const PASSWORD = process.env.OPENCLAW_GATEWAY_PASSWORD;
+const ENV_URL = process.env.OPENCLAW_GATEWAY_URL?.trim() || undefined;
+const ENV_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
+const ENV_PASSWORD = process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || undefined;
 const TIMEOUT = process.env.OPENCLAW_TIMEOUT_MS ? Number(process.env.OPENCLAW_TIMEOUT_MS) : undefined;
 const DEBUG = process.env.OPENCLAW_DEBUG === "1";
 
@@ -19,27 +22,82 @@ function debug(msg: string) {
   if (DEBUG) process.stderr.write(`${msg}\n`);
 }
 
-if (!URL) {
-  process.stderr.write(
-    "ERROR: OPENCLAW_GATEWAY_URL is required (e.g. ws://127.0.0.1:18789).\n" +
-      "Extract it from the Control panel localStorage: openclaw.control.settings.v1 -> gatewayUrl.\n",
-  );
-  process.exit(1);
+const store = new Store();
+
+let client: GatewayClient | null = null;
+
+async function ensureClient(): Promise<GatewayClient> {
+  if (client) return client;
+  let url = ENV_URL;
+  let token = ENV_TOKEN;
+  let password = ENV_PASSWORD;
+  if (!url) {
+    const cfg = await store.loadConfig();
+    url = cfg.gatewayUrl;
+    token = token ?? cfg.gatewayToken;
+    password = password ?? cfg.gatewayPassword;
+  }
+  if (!url) {
+    throw new Error(
+      "OpenClaw gateway not configured. Set OPENCLAW_GATEWAY_URL/OPENCLAW_GATEWAY_TOKEN env vars when launching this MCP, or call openclaw_setup({gatewayUrl, gatewayToken}) to persist them.",
+    );
+  }
+  client = new GatewayClient({
+    url,
+    token,
+    password,
+    timeoutMs: TIMEOUT,
+    store,
+    debug,
+  });
+  return client;
 }
 
-const client = new GatewayClient({
-  url: URL,
-  token: TOKEN,
-  password: PASSWORD,
-  timeoutMs: TIMEOUT,
-  debug,
+async function reconfigure() {
+  if (client) {
+    await client.close();
+    client = null;
+  }
+}
+
+const clientShim: GatewayClient = {
+  request: (async (method: string, params?: unknown) => {
+    const c = await ensureClient();
+    return c.request(method, params);
+  }) as GatewayClient["request"],
+  connect: (async () => {
+    const c = await ensureClient();
+    return c.connect();
+  }) as GatewayClient["connect"],
+  close: (async () => {
+    if (client) await client.close();
+  }) as GatewayClient["close"],
+  getDevice: () => client?.getDevice() ?? null,
+  getLastHello: () => client?.getLastHello() ?? null,
+  getPairingPending: () => client?.getPairingPending() ?? null,
+  getGatewayId: () => client?.getGatewayId() ?? "<unconfigured>",
+} as unknown as GatewayClient;
+
+const setupTools = buildSetupTools(store, {
+  reconfigure: async () => {
+    await reconfigure();
+  },
+  envOverride: () => ({
+    gatewayUrl: ENV_URL,
+    tokenSet: !!ENV_TOKEN,
+    passwordSet: !!ENV_PASSWORD,
+  }),
 });
 
-const tools: ToolDef[] = [...buildCronTools(client)];
+const tools: ToolDef[] = [
+  ...setupTools,
+  ...buildDeviceTools(clientShim, store),
+  ...buildCronTools(clientShim),
+];
 const toolMap = new Map(tools.map((t) => [t.name, t]));
 
 const server = new Server(
-  { name: "openclaw-claw-mcp", version: "0.1.0" },
+  { name: "openclaw-control-mcp", version: "0.2.0" },
   { capabilities: { tools: {} } },
 );
 
@@ -60,7 +118,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (!parsed.success) {
     throw new Error(`invalid arguments for ${tool.name}: ${parsed.error.message}`);
   }
-  await client.connect();
   const result = await tool.handler(parsed.data);
   return {
     content: [
@@ -75,11 +132,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 const transport = new StdioServerTransport();
 
 async function shutdown() {
-  await client.close();
+  if (client) await client.close();
   process.exit(0);
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 await server.connect(transport);
-debug("openclaw-claw-mcp connected via stdio");
+debug("openclaw-control-mcp connected via stdio");
