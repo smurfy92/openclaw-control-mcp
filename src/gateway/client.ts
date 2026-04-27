@@ -1,5 +1,7 @@
 import { WebSocket } from "ws";
 import { randomUUID } from "node:crypto";
+import { generateDevice, signConnect, verifyDeviceId, type DeviceIdentity } from "./device.js";
+import { Store, type DeviceTokenEntry } from "./store.js";
 
 export type GatewayClientOptions = {
   url: string;
@@ -10,6 +12,7 @@ export type GatewayClientOptions = {
   clientMode?: string;
   instanceId?: string;
   timeoutMs?: number;
+  store?: Store;
   debug?: (msg: string) => void;
 };
 
@@ -27,9 +30,31 @@ type ResFrame = {
   payload?: unknown;
   error?: { code?: string; message?: string; details?: unknown; retryable?: boolean; retryAfterMs?: number };
 };
-type EventFrame = { type: "event"; event: string; payload?: unknown; seq?: number };
+type EventFrame = { type: "event"; event: string; payload?: { nonce?: string; [k: string]: unknown }; seq?: number };
+
+type ConnectAuthResponse = {
+  deviceToken?: string;
+  role?: string;
+  scopes?: string[];
+};
+
+type HelloOkPayload = {
+  type?: string;
+  protocol?: number;
+  server?: { version?: string; connId?: string };
+  features?: { methods?: string[]; events?: string[] };
+  auth?: ConnectAuthResponse;
+  [k: string]: unknown;
+};
+
+export type PairingPending = {
+  requestId: string;
+  reason?: string;
+  detectedAtMs: number;
+};
 
 const DEFAULT_SCOPES = ["operator.read", "operator.write", "operator.admin"];
+const CLIENT_ID = "openclaw-ios";
 
 export class GatewayError extends Error {
   code?: string;
@@ -49,10 +74,16 @@ export class GatewayClient {
   private opts: Required<
     Pick<GatewayClientOptions, "url" | "clientName" | "clientVersion" | "clientMode" | "instanceId" | "timeoutMs">
   > &
-    Pick<GatewayClientOptions, "token" | "password" | "debug">;
+    Pick<GatewayClientOptions, "token" | "password" | "debug" | "store">;
   private ws: WebSocket | null = null;
   private pending = new Map<string, Pending>();
-  private connectedPromise: Promise<void> | null = null;
+  private connectedPromise: Promise<HelloOkPayload> | null = null;
+  private connectNonce: string | null = null;
+  private nonceWaiters: Array<(nonce: string) => void> = [];
+  private device: DeviceIdentity | null = null;
+  private gatewayId: string;
+  private lastHello: HelloOkPayload | null = null;
+  private pairingPending: PairingPending | null = null;
 
   constructor(opts: GatewayClientOptions) {
     this.opts = {
@@ -64,56 +95,181 @@ export class GatewayClient {
       clientMode: opts.clientMode ?? "ui",
       instanceId: opts.instanceId ?? `openclaw-claw-mcp-${process.pid}`,
       timeoutMs: opts.timeoutMs ?? 30_000,
+      store: opts.store,
       debug: opts.debug,
     };
+    this.gatewayId = Store.gatewayId(opts.url);
   }
 
   private log(msg: string) {
     this.opts.debug?.(`[gateway] ${msg}`);
   }
 
-  async connect(): Promise<void> {
+  getDevice(): DeviceIdentity | null {
+    return this.device;
+  }
+
+  getLastHello(): HelloOkPayload | null {
+    return this.lastHello;
+  }
+
+  getGatewayId(): string {
+    return this.gatewayId;
+  }
+
+  getPairingPending(): PairingPending | null {
+    return this.pairingPending;
+  }
+
+  async connect(): Promise<HelloOkPayload> {
     if (this.connectedPromise) return this.connectedPromise;
     this.connectedPromise = this.doConnect();
     try {
-      await this.connectedPromise;
+      return await this.connectedPromise;
     } catch (err) {
       this.connectedPromise = null;
       throw err;
     }
   }
 
-  private async doConnect(): Promise<void> {
+  private async loadOrCreateDevice(): Promise<DeviceIdentity> {
+    if (this.device) return this.device;
+    const store = this.opts.store;
+    if (store) {
+      const existing = await store.loadDevice();
+      if (existing) {
+        const verified = await verifyDeviceId(existing);
+        if (verified.deviceId !== existing.deviceId) {
+          await store.saveDevice({ ...verified, createdAtMs: existing.createdAtMs });
+        }
+        this.device = { deviceId: verified.deviceId, publicKey: verified.publicKey, privateKey: verified.privateKey };
+        this.log(`loaded device identity ${this.device.deviceId.slice(0, 16)}…`);
+        return this.device;
+      }
+      const created = await generateDevice();
+      await store.saveDevice({ ...created, createdAtMs: Date.now() });
+      this.device = created;
+      this.log(`generated new device identity ${created.deviceId.slice(0, 16)}… (persisted)`);
+      return this.device;
+    }
+    const ephemeral = await generateDevice();
+    this.device = ephemeral;
+    this.log(`generated ephemeral device identity ${ephemeral.deviceId.slice(0, 16)}…`);
+    return this.device;
+  }
+
+  private async loadDeviceToken(): Promise<DeviceTokenEntry | undefined> {
+    if (!this.opts.store) return undefined;
+    return this.opts.store.loadToken(this.gatewayId);
+  }
+
+  private async waitForNonce(maxWaitMs = 1500): Promise<string> {
+    if (this.connectNonce) return this.connectNonce;
+    return new Promise<string>((resolve) => {
+      const timer = setTimeout(() => {
+        this.nonceWaiters = this.nonceWaiters.filter((w) => w !== onNonce);
+        resolve(this.connectNonce ?? "");
+      }, maxWaitMs);
+      const onNonce = (nonce: string) => {
+        clearTimeout(timer);
+        resolve(nonce);
+      };
+      this.nonceWaiters.push(onNonce);
+    });
+  }
+
+  private async doConnect(): Promise<HelloOkPayload> {
     await this.waitOpen();
+
+    const device = await this.loadOrCreateDevice();
+    const tokenEntry = await this.loadDeviceToken();
+
+    const role = "operator";
+    const scopes = tokenEntry?.scopes?.length ? tokenEntry.scopes : DEFAULT_SCOPES;
+    const signedAtMs = Date.now();
+    const nonce = await this.waitForNonce();
+    if (!nonce) {
+      throw new Error("gateway did not deliver connect.challenge nonce within 1500ms");
+    }
+    const signature = await signConnect(
+      {
+        deviceId: device.deviceId,
+        clientId: CLIENT_ID,
+        clientMode: this.opts.clientMode,
+        role,
+        scopes,
+        signedAtMs,
+        token: this.opts.token ?? null,
+        nonce,
+      },
+      device.privateKey,
+    );
+
+    const auth: { token?: string; password?: string; deviceToken?: string } = {};
+    if (this.opts.token) auth.token = this.opts.token;
+    if (this.opts.password) auth.password = this.opts.password;
+    if (tokenEntry?.token) auth.deviceToken = tokenEntry.token;
+
     const params = {
       minProtocol: 3,
       maxProtocol: 3,
       client: {
-        id: "openclaw-ios",
+        id: CLIENT_ID,
         displayName: this.opts.clientName,
         version: this.opts.clientVersion,
-        platform: "dev",
+        platform: process.platform,
         mode: this.opts.clientMode,
         instanceId: this.opts.instanceId,
       },
       locale: "en-US",
       userAgent: this.opts.clientName,
-      role: "operator",
-      scopes: DEFAULT_SCOPES,
+      role,
+      scopes,
       caps: [] as string[],
-      auth: this.buildAuth(),
+      auth,
+      device: {
+        id: device.deviceId,
+        publicKey: device.publicKey,
+        signature,
+        signedAt: signedAtMs,
+        nonce,
+      },
     };
-    this.log(`sending connect request`);
-    const res = await this.requestRaw("connect", params);
-    this.log(`connect ok`);
-    return res as void;
-  }
 
-  private buildAuth(): { token?: string; password?: string } {
-    const auth: { token?: string; password?: string } = {};
-    if (this.opts.token) auth.token = this.opts.token;
-    if (this.opts.password) auth.password = this.opts.password;
-    return auth;
+    this.log(`sending connect (deviceId=${device.deviceId.slice(0, 16)}…, deviceToken=${tokenEntry ? "yes" : "no"}, nonce=${nonce ? "yes" : "no"})`);
+    let payload: HelloOkPayload;
+    try {
+      payload = (await this.requestRaw("connect", params)) as HelloOkPayload;
+    } catch (err) {
+      if (err instanceof GatewayError) {
+        const details = err.details as { code?: string; requestId?: string; reason?: string } | undefined;
+        if (details?.code === "PAIRING_REQUIRED" && details.requestId) {
+          this.pairingPending = {
+            requestId: details.requestId,
+            reason: details.reason,
+            detectedAtMs: Date.now(),
+          };
+          this.log(`pairing required: requestId=${details.requestId}`);
+        }
+      }
+      throw err;
+    }
+    this.pairingPending = null;
+    this.log(`connect ok (server=${payload.server?.version ?? "?"})`);
+    this.lastHello = payload;
+
+    if (this.opts.store && payload.auth?.deviceToken) {
+      const entry: DeviceTokenEntry = {
+        token: payload.auth.deviceToken,
+        role: payload.auth.role ?? role,
+        scopes: payload.auth.scopes ?? [],
+        savedAtMs: Date.now(),
+      };
+      await this.opts.store.saveToken(this.gatewayId, entry);
+      this.log(`device token persisted (scopes=${entry.scopes.join(",") || "<none>"})`);
+    }
+
+    return payload;
   }
 
   private waitOpen(): Promise<void> {
@@ -152,7 +308,7 @@ export class GatewayClient {
       throw new Error("gateway not connected");
     }
     const payload = JSON.stringify(frame);
-    this.log(`> (${payload.length} bytes) ${payload.length > 400 ? payload.slice(0, 400) + "..." : payload}`);
+    this.log(`> (${payload.length} bytes) ${payload.length > 600 ? payload.slice(0, 600) + "..." : payload}`);
     this.ws.send(payload);
   }
 
@@ -163,6 +319,21 @@ export class GatewayClient {
       frame = JSON.parse(raw);
     } catch {
       this.log(`failed to parse frame`);
+      return;
+    }
+
+    if (frame.type === "event") {
+      const ev = frame as EventFrame;
+      if (ev.event === "connect.challenge") {
+        const nonce = ev.payload?.nonce;
+        if (typeof nonce === "string") {
+          this.connectNonce = nonce;
+          this.log(`stored connect nonce`);
+          const waiters = this.nonceWaiters;
+          this.nonceWaiters = [];
+          for (const w of waiters) w(nonce);
+        }
+      }
       return;
     }
 
@@ -181,11 +352,6 @@ export class GatewayClient {
             : { message: String(res.error ?? "request failed") };
         p.reject(new GatewayError(err));
       }
-      return;
-    }
-
-    if (frame.type === "event") {
-      // ignore connect.challenge and other server events (parity with official smoke client)
       return;
     }
 

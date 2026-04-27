@@ -7,7 +7,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { GatewayClient } from "./gateway/client.js";
+import { Store } from "./gateway/store.js";
 import { buildCronTools, type ToolDef } from "./tools/cron.js";
+import { buildDeviceTools } from "./tools/device.js";
 
 const URL = process.env.OPENCLAW_GATEWAY_URL;
 const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN;
@@ -27,15 +29,17 @@ if (!URL) {
   process.exit(1);
 }
 
+const store = new Store();
 const client = new GatewayClient({
   url: URL,
   token: TOKEN,
   password: PASSWORD,
   timeoutMs: TIMEOUT,
+  store,
   debug,
 });
 
-const tools: ToolDef[] = [...buildCronTools(client)];
+const tools: ToolDef[] = [...buildDeviceTools(client, store), ...buildCronTools(client)];
 const toolMap = new Map(tools.map((t) => [t.name, t]));
 
 const server = new Server(
@@ -60,7 +64,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (!parsed.success) {
     throw new Error(`invalid arguments for ${tool.name}: ${parsed.error.message}`);
   }
-  await client.connect();
   const result = await tool.handler(parsed.data);
   return {
     content: [
