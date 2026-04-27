@@ -6,10 +6,7 @@ The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrap
 
 ## Status
 
-**0.2.0 / preview.** Tools registered:
-- Setup: `openclaw_setup`, `openclaw_setup_show`, `openclaw_setup_clear`.
-- Device: `openclaw_device_status`, `openclaw_device_pair_list`, `openclaw_device_pair_approve`, `openclaw_device_pair_reject`.
-- Cron: `openclaw_cron_list`, `_status`, `_run`, `_runs`, `_remove`, `_add` (need `operator.read` scope).
+**0.3.0 / preview.** **134 typed tools wrapping the 128 JSON-RPC methods the gateway publishes** — cron, sessions, agents, channels, chat, logs, models, usage, status/health/heartbeats, config, secrets, skills, exec/plugin approvals, wizard, doctor.memory, node, tts/talk/voicewake, plus device pairing & in-chat setup. The two introspection tools `openclaw_introspect` (lists every method/event the gateway publishes in its `hello-ok`) and `openclaw_call` (escape hatch for any method) make new gateway endpoints reachable without waiting on a release.
 
 WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
@@ -30,11 +27,22 @@ The wire format (frame types, field names, signing canonicalisation, scopes) was
 
 ## Install
 
+### From npm (recommended)
+
+```bash
+claude mcp add openclaw-control -- npx -y openclaw-control-mcp
+```
+
+Restart Claude Code, then jump to [Configuration](#configuration).
+
+### From source (for contributors)
+
 ```bash
 git clone https://github.com/smurfy92/openclaw-control-mcp.git
 cd openclaw-control-mcp
 npm install
 npm run build
+claude mcp add openclaw-control -- node "$(pwd)/dist/index.js"
 ```
 
 ## Configuration
@@ -53,13 +61,7 @@ Find it from your browser:
 
 ### Recommended: register, then configure in chat
 
-The slickest path — no `~/.claude.json` editing, no env vars:
-
-```bash
-claude mcp add openclaw-control -- node /absolute/path/to/openclaw-control-mcp/dist/index.js
-```
-
-Restart Claude Code, then in chat:
+The slickest path — no `~/.claude.json` editing, no env vars. After installing (npx or from source), in chat:
 
 > "Configure OpenClaw with gateway `wss://openclaw-xxx.srv.hstgr.cloud` and token `<your-token>`"
 
@@ -74,8 +76,8 @@ If you prefer env vars (they take precedence over the stored config), edit `~/.c
 ```json
 "openclaw-control": {
   "type": "stdio",
-  "command": "node",
-  "args": ["/absolute/path/to/openclaw-control-mcp/dist/index.js"],
+  "command": "npx",
+  "args": ["-y", "openclaw-control-mcp"],
   "env": {
     "OPENCLAW_GATEWAY_URL": "wss://openclaw-xxx.srv.hstgr.cloud",
     "OPENCLAW_GATEWAY_TOKEN": "<your-token>",
@@ -129,13 +131,9 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 
 ## Roadmap
 
-- Sessions (`sessions.list/get/delete`)
-- Agents (`agents.list/files/skills`)
-- Channels (`channels.list/send/broadcast`)
-- Skills (`skills.list/report`)
-- Instances (`instances.list/usage`)
-- Logs (`logs.tail/search`)
-- Auto-reconnect with backoff (currently single-shot — Claude Code respawns the stdio process on demand)
+- Auto-reconnect with backoff (currently single-shot — Claude Code respawns the stdio process on demand).
+- Stream session messages back into the MCP client (currently `sessions.subscribe` registers server-side but stdio can't surface deltas to Claude Code).
+- Tighten Zod schemas for the wrappers added in 0.3.0 — most use `passthrough()` until the gateway shape for each domain is fully nailed down. PRs welcome.
 
 ## Migrating from openclaw-claw-mcp (early adopters)
 
