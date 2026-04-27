@@ -1,4 +1,4 @@
-# openclaw-claw-mcp
+# openclaw-control-mcp
 
 MCP server bridging Claude Code (or any MCP client) to the OpenClaw gateway management plane (cron, sessions, agents, channels) via WebSocket JSON-RPC.
 
@@ -10,7 +10,7 @@ The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrap
 - Cron: `openclaw_cron_list`, `_status`, `_run`, `_runs`, `_remove`, `_add` (need `operator.read` scope).
 - Device: `openclaw_device_status`, `openclaw_device_pair_list`, `openclaw_device_pair_approve`, `openclaw_device_pair_reject`.
 
-WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-claw-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
+WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
 The wire format (frame types, field names, signing canonicalisation, scopes) was reverse-engineered from the minified Control panel bundle (`/api-docs/assets/index-*.js`) and cross-checked against `openclaw/openclaw/scripts/dev/gateway-smoke.ts`. It is **not officially documented**. Behaviour may change without notice if OpenClaw updates the gateway.
 
@@ -30,7 +30,8 @@ The wire format (frame types, field names, signing canonicalisation, scopes) was
 ## Install
 
 ```bash
-cd /path/to/openclaw-claw-mcp
+git clone https://github.com/smurfy92/openclaw-control-mcp.git
+cd openclaw-control-mcp
 npm install
 npm run build
 ```
@@ -52,10 +53,10 @@ Find it from your browser:
 Add an entry to `~/.claude.json` next to the existing `openclaw` server:
 
 ```json
-"openclaw-claw": {
+"openclaw-control": {
   "type": "stdio",
   "command": "node",
-  "args": ["/Users/<you>/path/to/openclaw-claw-mcp/dist/index.js"],
+  "args": ["/Users/<you>/path/to/openclaw-control-mcp/dist/index.js"],
   "env": {
     "OPENCLAW_GATEWAY_URL": "ws://127.0.0.1:18789",
     "OPENCLAW_GATEWAY_TOKEN": "<your gateway token>",
@@ -75,7 +76,7 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 | `OPENCLAW_GATEWAY_PASSWORD` | optional | Extra password (some gateway configs require it) |
 | `OPENCLAW_TIMEOUT_MS` | optional | Connect / request timeout (default 30000) |
 | `OPENCLAW_DEBUG` | optional | Set to `1` to log every WS frame to stderr |
-| `OPENCLAW_CLAW_HOME` | optional | Override the directory used to persist `store.json` (defaults to `${XDG_CONFIG_HOME:-~/.config}/openclaw-claw-mcp/`) |
+| `OPENCLAW_CONTROL_HOME` | optional | Override the directory used to persist `store.json` (defaults to `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/`). The legacy `OPENCLAW_CLAW_HOME` is still read as a fallback. |
 
 ## Tools
 
@@ -108,6 +109,14 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 - Instances (`instances.list/usage`)
 - Logs (`logs.tail/search`)
 - Auto-reconnect with backoff (currently single-shot — Claude Code respawns the stdio process on demand)
+
+## Migrating from openclaw-claw-mcp (early adopters)
+
+If you used the wrapper under its previous name (`openclaw-claw-mcp`):
+- The Store automatically reads `~/.config/openclaw-claw-mcp/store.json` as a fallback when the new path is empty, so your paired device token keeps working.
+- On the next successful connect, the new path (`~/.config/openclaw-control-mcp/store.json`) is created. You can then delete the old directory.
+- Update the entry name in `~/.claude.json` from `openclaw-claw` to `openclaw-control` (purely cosmetic — only changes the tool prefix `mcp__openclaw-control__*`).
+- The local working dir / build output keeps the same path you cloned to; nothing else needs moving.
 
 ## Caveats
 

@@ -1,10 +1,10 @@
 {
-  "name": "openclaw-claw-mcp",
+  "name": "openclaw-control-mcp",
   "version": "0.1.0",
   "description": "MCP server bridging Claude Code to the OpenClaw gateway management plane (cron, sessions, agents, channels) via WebSocket JSON-RPC.",
   "type": "module",
   "bin": {
-    "openclaw-claw-mcp": "./dist/index.js"
+    "openclaw-control-mcp": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [

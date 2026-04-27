@@ -17,13 +17,15 @@ export type StoreShape = {
   tokens?: Record<string, DeviceTokenEntry>;
 };
 
-const DEFAULT_DIR = process.env.OPENCLAW_CLAW_HOME
-  ? process.env.OPENCLAW_CLAW_HOME
-  : join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "openclaw-claw-mcp");
+const XDG_BASE = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+const LEGACY_DIR = join(XDG_BASE, "openclaw-claw-mcp");
+const DEFAULT_DIR =
+  process.env.OPENCLAW_CONTROL_HOME ??
+  process.env.OPENCLAW_CLAW_HOME ?? // backward-compat for early adopters
+  join(XDG_BASE, "openclaw-control-mcp");
 
 export class Store {
   private path: string;
-  private cache: StoreShape | null = null;
 
   constructor(dir: string = DEFAULT_DIR, fileName: string = "store.json") {
     this.path = join(dir, fileName);
@@ -34,19 +36,33 @@ export class Store {
   }
 
   async load(): Promise<StoreShape> {
-    if (this.cache) return this.cache;
+    const raw = await this.readPrimaryOrLegacy();
+    if (!raw) return { version: 1 };
     try {
-      const raw = await readFile(this.path, "utf8");
       const parsed = JSON.parse(raw) as StoreShape;
-      this.cache = parsed?.version === 1 ? parsed : { version: 1 };
+      return parsed?.version === 1 ? parsed : { version: 1 };
     } catch {
-      this.cache = { version: 1 };
+      return { version: 1 };
     }
-    return this.cache;
+  }
+
+  private async readPrimaryOrLegacy(): Promise<string | null> {
+    try {
+      return await readFile(this.path, "utf8");
+    } catch {
+      // fall through to legacy
+    }
+    if (LEGACY_DIR !== dirname(this.path)) {
+      try {
+        return await readFile(join(LEGACY_DIR, "store.json"), "utf8");
+      } catch {
+        // no legacy either
+      }
+    }
+    return null;
   }
 
   async save(state: StoreShape): Promise<void> {
-    this.cache = state;
     await mkdir(dirname(this.path), { recursive: true });
     await writeFile(this.path, JSON.stringify(state, null, 2), "utf8");
     try {
