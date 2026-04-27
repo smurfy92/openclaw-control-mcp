@@ -6,9 +6,10 @@ The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrap
 
 ## Status
 
-**0.1.0 / preview.** Tools registered:
-- Cron: `openclaw_cron_list`, `_status`, `_run`, `_runs`, `_remove`, `_add` (need `operator.read` scope).
+**0.2.0 / preview.** Tools registered:
+- Setup: `openclaw_setup`, `openclaw_setup_show`, `openclaw_setup_clear`.
 - Device: `openclaw_device_status`, `openclaw_device_pair_list`, `openclaw_device_pair_approve`, `openclaw_device_pair_reject`.
+- Cron: `openclaw_cron_list`, `_status`, `_run`, `_runs`, `_remove`, `_add` (need `operator.read` scope).
 
 WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
@@ -50,16 +51,34 @@ Find it from your browser:
 
 ## Use with Claude Code
 
-Add an entry to `~/.claude.json` next to the existing `openclaw` server:
+### Recommended: register, then configure in chat
+
+The slickest path — no `~/.claude.json` editing, no env vars:
+
+```bash
+claude mcp add openclaw-control -- node /absolute/path/to/openclaw-control-mcp/dist/index.js
+```
+
+Restart Claude Code, then in chat:
+
+> "Configure OpenClaw with gateway `wss://openclaw-xxx.srv.hstgr.cloud` and token `<your-token>`"
+
+Claude calls `openclaw_setup({ gatewayUrl, gatewayToken })`, the values get persisted to `~/.config/openclaw-control-mcp/store.json` (mode `0600`). The next call to `openclaw_device_status` triggers the WS handshake and pairing flow.
+
+`openclaw_setup_show` reports the effective configuration, `openclaw_setup_clear` wipes the persisted config (without touching the device identity / token).
+
+### Alternative: env-var-driven
+
+If you prefer env vars (they take precedence over the stored config), edit `~/.claude.json`:
 
 ```json
 "openclaw-control": {
   "type": "stdio",
   "command": "node",
-  "args": ["/Users/<you>/path/to/openclaw-control-mcp/dist/index.js"],
+  "args": ["/absolute/path/to/openclaw-control-mcp/dist/index.js"],
   "env": {
-    "OPENCLAW_GATEWAY_URL": "ws://127.0.0.1:18789",
-    "OPENCLAW_GATEWAY_TOKEN": "<your gateway token>",
+    "OPENCLAW_GATEWAY_URL": "wss://openclaw-xxx.srv.hstgr.cloud",
+    "OPENCLAW_GATEWAY_TOKEN": "<your-token>",
     "OPENCLAW_TIMEOUT_MS": "30000"
   }
 }
@@ -79,6 +98,14 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 | `OPENCLAW_CONTROL_HOME` | optional | Override the directory used to persist `store.json` (defaults to `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/`). The legacy `OPENCLAW_CLAW_HOME` is still read as a fallback. |
 
 ## Tools
+
+### Setup (no scopes required)
+
+| Tool | Notes |
+|---|---|
+| `openclaw_setup` | Persist `{ gatewayUrl, gatewayToken, gatewayPassword? }` to local config. Closes any active connection so the next call uses the new credentials. |
+| `openclaw_setup_show` | Report effective config (env vs store), without printing tokens. |
+| `openclaw_setup_clear` | Wipe persisted gateway config. Device identity + tokens are kept. |
 
 ### Pairing / device
 

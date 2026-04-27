@@ -11,10 +11,19 @@ export type DeviceTokenEntry = {
   savedAtMs: number;
 };
 
+export type GatewayConfigShape = {
+  gatewayUrl?: string;
+  gatewayToken?: string;
+  gatewayPassword?: string;
+  timeoutMs?: number;
+  savedAtMs?: number;
+};
+
 export type StoreShape = {
   version: 1;
   device?: DeviceIdentity & { createdAtMs: number };
   tokens?: Record<string, DeviceTokenEntry>;
+  config?: GatewayConfigShape;
 };
 
 const XDG_BASE = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
@@ -36,30 +45,31 @@ export class Store {
   }
 
   async load(): Promise<StoreShape> {
-    const raw = await this.readPrimaryOrLegacy();
-    if (!raw) return { version: 1 };
-    try {
-      const parsed = JSON.parse(raw) as StoreShape;
-      return parsed?.version === 1 ? parsed : { version: 1 };
-    } catch {
-      return { version: 1 };
-    }
+    const primary = await this.readShape(this.path);
+    const legacy =
+      LEGACY_DIR !== dirname(this.path) ? await this.readShape(join(LEGACY_DIR, "store.json")) : null;
+    if (!primary && !legacy) return { version: 1 };
+    if (primary && !legacy) return primary;
+    if (!primary && legacy) return legacy;
+    // merge: primary fields win, legacy fills in missing pieces (device + tokens are typically only in legacy
+    // during migration; config is the new piece written to primary)
+    const merged: StoreShape = { version: 1 };
+    merged.device = primary?.device ?? legacy?.device;
+    merged.tokens = { ...(legacy?.tokens ?? {}), ...(primary?.tokens ?? {}) };
+    if (Object.keys(merged.tokens).length === 0) delete merged.tokens;
+    merged.config = primary?.config ?? legacy?.config;
+    if (!merged.config) delete merged.config;
+    return merged;
   }
 
-  private async readPrimaryOrLegacy(): Promise<string | null> {
+  private async readShape(path: string): Promise<StoreShape | null> {
     try {
-      return await readFile(this.path, "utf8");
+      const raw = await readFile(path, "utf8");
+      const parsed = JSON.parse(raw) as StoreShape;
+      return parsed?.version === 1 ? parsed : null;
     } catch {
-      // fall through to legacy
+      return null;
     }
-    if (LEGACY_DIR !== dirname(this.path)) {
-      try {
-        return await readFile(join(LEGACY_DIR, "store.json"), "utf8");
-      } catch {
-        // no legacy either
-      }
-    }
-    return null;
   }
 
   async save(state: StoreShape): Promise<void> {
@@ -99,6 +109,25 @@ export class Store {
     const s = await this.load();
     if (s.tokens?.[gatewayId]) {
       delete s.tokens[gatewayId];
+      await this.save(s);
+    }
+  }
+
+  async loadConfig(): Promise<GatewayConfigShape> {
+    const s = await this.load();
+    return s.config ?? {};
+  }
+
+  async saveConfig(cfg: GatewayConfigShape): Promise<void> {
+    const s = await this.load();
+    s.config = { ...s.config, ...cfg, savedAtMs: Date.now() };
+    await this.save(s);
+  }
+
+  async clearConfig(): Promise<void> {
+    const s = await this.load();
+    if (s.config) {
+      delete s.config;
       await this.save(s);
     }
   }
