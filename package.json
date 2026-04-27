@@ -1,0 +1,37 @@
+{
+  "name": "openclaw-claw-mcp",
+  "version": "0.1.0",
+  "description": "MCP server bridging Claude Code to the OpenClaw gateway management plane (cron, sessions, agents, channels) via WebSocket JSON-RPC.",
+  "type": "module",
+  "bin": {
+    "openclaw-claw-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --target node22 --dts --clean",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "license": "MIT"
+}
