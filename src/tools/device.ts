@@ -77,5 +77,43 @@ export function buildDeviceTools(client: GatewayClient, store: Store): ToolDef[]
     handler: async (args) => client.request("device.pair.reject", args ?? {}),
   };
 
-  return [deviceStatus, devicePairList, devicePairApprove, devicePairReject];
+  const devicePairRemove: ToolDef = {
+    name: "openclaw_device_pair_remove",
+    description:
+      "Remove a paired device from the gateway. Wraps `device.pair.remove`. Destructive — the device will need to re-pair to reconnect.",
+    inputSchema: z.object({
+      deviceId: z.string().min(1).describe("Device id (hex) to unpair"),
+    }),
+    handler: async (args) => client.request("device.pair.remove", args ?? {}),
+  };
+
+  const deviceTokenRevoke: ToolDef = {
+    name: "openclaw_device_token_revoke",
+    description:
+      "Revoke a device's authentication token. Wraps `device.token.revoke`. Destructive — the device must re-pair (or use a freshly issued token).",
+    inputSchema: z.object({
+      deviceId: z.string().min(1).describe("Device id whose token to revoke"),
+    }),
+    handler: async (args) => client.request("device.token.revoke", args ?? {}),
+  };
+
+  const deviceTokenRotate: ToolDef = {
+    name: "openclaw_device_token_rotate",
+    description:
+      "Rotate a device's authentication token (issues a new one, invalidates the old). Wraps `device.token.rotate`. Destructive — the device's currently cached token stops working.",
+    inputSchema: z.object({
+      deviceId: z.string().min(1).describe("Device id whose token to rotate"),
+    }),
+    handler: async (args) => client.request("device.token.rotate", args ?? {}),
+  };
+
+  return [
+    deviceStatus,
+    devicePairList,
+    devicePairApprove,
+    devicePairReject,
+    devicePairRemove,
+    deviceTokenRevoke,
+    deviceTokenRotate,
+  ];
 }
