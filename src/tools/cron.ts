@@ -112,5 +112,50 @@ export function buildCronTools(client: GatewayClient): ToolDef[] {
     handler: async (args) => client.request("cron.add", args ?? {}),
   };
 
-  return [cronList, cronStatus, cronRun, cronRuns, cronRemove, cronAdd];
+  const cronUpdate: ToolDef = {
+    name: "openclaw_cron_update",
+    description:
+      "Update an existing OpenClaw cron job in place. Wraps `cron.update`. Avoids the remove + re-add dance when you just want to change schedule, timeout, payload, or delivery. Pass the job id and the fields to change.",
+    inputSchema: z.object({
+      job: z
+        .object({
+          id: z.string().min(1).describe("Cron job id"),
+          name: z.string().optional(),
+          enabled: z.boolean().optional(),
+          schedule: z
+            .object({
+              kind: z.enum(["every", "cron", "exact"]),
+              expr: z.string().optional(),
+              tz: z.string().optional(),
+              everyMs: z.number().int().positive().optional(),
+              at: z.string().optional(),
+            })
+            .passthrough()
+            .optional(),
+          payload: z
+            .object({
+              kind: z.enum(["agentTurn", "systemEvent"]),
+              message: z.string().optional(),
+              text: z.string().optional(),
+              timeoutSeconds: z.number().int().positive().optional(),
+              model: z.string().optional(),
+            })
+            .passthrough()
+            .optional(),
+          delivery: z
+            .object({
+              mode: z.enum(["announce", "direct", "none"]).optional(),
+              channel: z.string().optional(),
+              to: z.string().optional(),
+            })
+            .passthrough()
+            .optional(),
+          deleteAfterRun: z.boolean().optional(),
+        })
+        .passthrough(),
+    }),
+    handler: async (args) => client.request("cron.update", args ?? {}),
+  };
+
+  return [cronList, cronStatus, cronRun, cronRuns, cronRemove, cronAdd, cronUpdate];
 }
