@@ -16,13 +16,13 @@ export function buildAgentsTools(client: GatewayClient): ToolDef[] {
   const create: ToolDef = {
     name: "openclaw_agents_create",
     description:
-      "Create a new agent configuration. Wraps `agents.create`. Pass agentId, displayName, model, system prompt, etc.; call openclaw_agents_list first to see the shape of an existing agent.",
+      "Create a new agent configuration. Wraps `agents.create`. Pass `agentId`, `displayName`, `model`, plus any extra fields the gateway accepts (system prompt, default tools, etc.). Call openclaw_agents_list first to see the full shape of an existing agent.",
     inputSchema: z
       .object({
-        agentId: z.string().min(1).optional(),
-        id: z.string().optional(),
-        displayName: z.string().optional(),
-        model: z.string().optional(),
+        agentId: z.string().min(1).optional().describe("Agent identifier (e.g. 'spartners-bot'). Defaults to a generated id if omitted."),
+        id: z.string().optional().describe("Alias for agentId — pass either, not both."),
+        displayName: z.string().optional().describe("Human-readable name shown in the Control panel."),
+        model: z.string().optional().describe("Default model id (e.g. 'claude-sonnet-4-6')."),
       })
       .passthrough(),
     handler: async (args) => client.request("agents.create", args ?? {}),
@@ -31,7 +31,7 @@ export function buildAgentsTools(client: GatewayClient): ToolDef[] {
   const update: ToolDef = {
     name: "openclaw_agents_update",
     description:
-      "Update an existing agent's configuration. Wraps `agents.update`. Pass agentId + the fields to change.",
+      "Update an existing agent's configuration. Wraps `agents.update`. Pass `agentId` + only the fields you want to change. Schema is permissive — gateway accepts the same shape as `agents.create`.",
     inputSchema: agentIdOnly.passthrough(),
     handler: async (args) => client.request("agents.update", args ?? {}),
   };
@@ -55,12 +55,12 @@ export function buildAgentsTools(client: GatewayClient): ToolDef[] {
   const filesGet: ToolDef = {
     name: "openclaw_agents_files_get",
     description:
-      "Fetch a specific agent file's contents. Wraps `agents.files.get`. Read-only.",
+      "Fetch a specific agent file's contents (system prompt, tool definitions, etc.). Wraps `agents.files.get`. Read-only. Pass either `path` (full path including the file name) or `name` (file basename) — not both.",
     inputSchema: z
       .object({
         agentId: z.string().min(1),
-        path: z.string().min(1).optional(),
-        name: z.string().optional(),
+        path: z.string().min(1).optional().describe("Full file path (e.g. 'system.md'). Pass either this or `name`."),
+        name: z.string().optional().describe("File basename. Pass either this or `path`."),
       })
       .passthrough(),
     handler: async (args) => client.request("agents.files.get", args ?? {}),
@@ -69,14 +69,14 @@ export function buildAgentsTools(client: GatewayClient): ToolDef[] {
   const filesSet: ToolDef = {
     name: "openclaw_agents_files_set",
     description:
-      "Write or overwrite an agent file. Wraps `agents.files.set`. Destructive — overwrites existing content. Pass agentId, path/name, and the file body.",
+      "Write or overwrite an agent file. Wraps `agents.files.set`. Destructive — overwrites existing content silently. Pass `agentId`, `path` or `name`, and `content` or `body` (gateway accepts both names depending on version).",
     inputSchema: z
       .object({
         agentId: z.string().min(1),
-        path: z.string().min(1).optional(),
-        name: z.string().optional(),
-        content: z.string().optional(),
-        body: z.string().optional(),
+        path: z.string().min(1).optional().describe("Full file path (e.g. 'system.md'). Pass either this or `name`."),
+        name: z.string().optional().describe("File basename. Pass either this or `path`."),
+        content: z.string().optional().describe("File body. Newer field name."),
+        body: z.string().optional().describe("File body. Older alias for `content`; pass either, not both."),
       })
       .passthrough(),
     handler: async (args) => client.request("agents.files.set", args ?? {}),
