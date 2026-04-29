@@ -206,7 +206,7 @@ Copy-paste prompts you can drop into Claude after the MCP is paired. Each one ta
 → `openclaw_cron_runs({ id: "<job-id>", limit: 5, compact: true })` — summaries truncated to 200 chars, each entry gets a `runAtAgo: "3d ago"` field.
 
 ```
-> Create a cron that runs every Friday at 1pm Paris and posts a summary to Telegram group -5152945874.
+> Create a cron that runs every Friday at 1pm Paris and posts a summary to Telegram group -1001234567890.
 ```
 
 → Generates an `openclaw_cron_add` payload with the right `schedule.kind: "cron"`, `expr: "0 13 * * 5"`, `tz: "Europe/Paris"`, and `delivery.mode: "announce"`.
