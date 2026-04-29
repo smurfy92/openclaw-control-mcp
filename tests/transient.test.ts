@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GatewayError, isTransientError } from "../src/gateway/client.js";
+import { enrichRequestError, GatewayError, isTransientError } from "../src/gateway/client.js";
 
 describe("isTransientError", () => {
   it.each([
@@ -38,5 +38,40 @@ describe("isTransientError", () => {
   it("does not retry random non-network errors", () => {
     expect(isTransientError(new Error("invalid arguments for tool"))).toBe(false);
     expect(isTransientError(new Error("unknown tool: foo"))).toBe(false);
+  });
+});
+
+describe("enrichRequestError", () => {
+  it("prefixes the message with method + attempt and preserves cause", () => {
+    const original = new Error("gateway not connected");
+    const wrapped = enrichRequestError(original, "cron.list", 4, 4);
+    expect(wrapped.message).toBe(
+      "gateway request 'cron.list' failed (attempt 4/4): gateway not connected",
+    );
+    expect((wrapped as Error & { cause?: unknown }).cause).toBe(original);
+  });
+
+  it("preserves GatewayError fields (code, details, retryable)", () => {
+    const orig = new GatewayError({
+      code: "MISSING_SCOPE",
+      message: "missing scope: operator.read",
+      details: { scope: "operator.read" },
+      retryable: false,
+    });
+    const wrapped = enrichRequestError(orig, "sessions.list", 1, 4);
+    expect(wrapped).toBeInstanceOf(GatewayError);
+    const gw = wrapped as GatewayError;
+    expect(gw.code).toBe("MISSING_SCOPE");
+    expect(gw.details).toEqual({ scope: "operator.read" });
+    expect(gw.retryable).toBe(false);
+    expect(gw.message.startsWith("gateway request 'sessions.list' failed (attempt 1/4): ")).toBe(true);
+    expect((gw as GatewayError & { cause?: unknown }).cause).toBe(orig);
+  });
+
+  it("is idempotent on already-wrapped errors", () => {
+    const orig = new Error("gateway closed");
+    const once = enrichRequestError(orig, "cron.list", 4, 4);
+    const twice = enrichRequestError(once, "cron.list", 4, 4);
+    expect(twice).toBe(once); // returns the same object, no double-prefix
   });
 });

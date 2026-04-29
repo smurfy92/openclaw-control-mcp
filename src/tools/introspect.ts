@@ -2,12 +2,13 @@ import { z } from "zod";
 import type { GatewayClient } from "../gateway/client.js";
 import type { Store } from "../gateway/store.js";
 import type { ToolDef } from "./cron.js";
+import { WRAPPED_METHODS } from "./wrappedMethods.js";
 
 export function buildIntrospectTools(client: GatewayClient, store: Store): ToolDef[] {
   const introspect: ToolDef = {
     name: "openclaw_introspect",
     description:
-      "Inspect the OpenClaw gateway capabilities. Triggers a connect (if not already), then returns the server version, this device's role/scopes, and the full list of JSON-RPC `methods` and `events` the gateway publishes in its hello-ok handshake. Use this to discover what methods you can call via `openclaw_call` (or to know which ones still need a typed wrapper).",
+      "Inspect the OpenClaw gateway capabilities. Triggers a connect (if not already), returns the server version, this device's role/scopes, the full list of JSON-RPC `methods` and `events` the gateway publishes, and a coverage report comparing those methods to the typed wrappers this MCP exposes. Use to discover what methods you can call via `openclaw_call` and to spot endpoints that still need a typed wrapper after a gateway upgrade.",
     inputSchema: z.object({}),
     handler: async () => {
       let connectError: string | null = null;
@@ -32,6 +33,15 @@ export function buildIntrospectTools(client: GatewayClient, store: Store): ToolD
       }
       for (const list of Object.values(methodsByDomain)) list.sort();
 
+      // Coverage: methods the gateway publishes vs methods this MCP wraps.
+      const publishedSet = new Set(methods);
+      const unwrappedMethods = methods
+        .filter((m) => !WRAPPED_METHODS.has(m))
+        .sort();
+      const wrappedButNotPublished = [...WRAPPED_METHODS]
+        .filter((m) => !publishedSet.has(m))
+        .sort();
+
       return {
         server: hello?.server ?? null,
         role: tokenEntry?.role ?? null,
@@ -39,6 +49,17 @@ export function buildIntrospectTools(client: GatewayClient, store: Store): ToolD
         connectError,
         methodCount: methods.length,
         eventCount: events.length,
+        coverage: {
+          published: methods.length,
+          wrapped: WRAPPED_METHODS.size,
+          covered: methods.length - unwrappedMethods.length,
+          percent:
+            methods.length === 0
+              ? 0
+              : Math.round(((methods.length - unwrappedMethods.length) / methods.length) * 1000) / 10,
+          unwrappedMethods,
+          wrappedButNotPublished,
+        },
         methodsByDomain,
         events: [...events].sort(),
       };
