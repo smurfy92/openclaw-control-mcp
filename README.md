@@ -1,6 +1,7 @@
 # openclaw-control-mcp
 
 [![npm](https://img.shields.io/npm/v/openclaw-control-mcp.svg)](https://www.npmjs.com/package/openclaw-control-mcp)
+[![CI](https://github.com/smurfy92/openclaw-control-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/smurfy92/openclaw-control-mcp/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/openclaw-control-mcp.svg)](./LICENSE)
 
 MCP server bridging Claude Code (or any MCP client) to the OpenClaw gateway management plane via WebSocket JSON-RPC. **134 typed tools wrapping all 128 JSON-RPC methods** the gateway publishes — cron, sessions, agents, channels, chat, logs, models, usage, status/health, config, secrets, skills, exec/plugin approvals, wizard, doctor memory, nodes, voice (TTS / talk / voicewake) — plus device pairing and in-chat setup.
@@ -9,7 +10,7 @@ The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrap
 
 ## Status
 
-**0.3.0 / preview.** **134 typed tools wrapping the 128 JSON-RPC methods the gateway publishes** — cron, sessions, agents, channels, chat, logs, models, usage, status/health/heartbeats, config, secrets, skills, exec/plugin approvals, wizard, doctor.memory, node, tts/talk/voicewake, plus device pairing & in-chat setup. The two introspection tools `openclaw_introspect` (lists every method/event the gateway publishes in its `hello-ok`) and `openclaw_call` (escape hatch for any method) make new gateway endpoints reachable without waiting on a release.
+**0.3.1 / preview.** **134 typed tools wrapping the 128 JSON-RPC methods the gateway publishes** — cron, sessions, agents, channels, chat, logs, models, usage, status/health/heartbeats, config, secrets, skills, exec/plugin approvals, wizard, doctor.memory, node, tts/talk/voicewake, plus device pairing & in-chat setup. The two introspection tools `openclaw_introspect` (lists every method/event the gateway publishes in its `hello-ok`) and `openclaw_call` (escape hatch for any method) make new gateway endpoints reachable without waiting on a release.
 
 WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
@@ -171,6 +172,86 @@ These carry destructive side effects (data loss, service interruption, revoked a
 - **Skills**: `skills_{install,update}`
 - **Approvals**: `exec_approval_resolve`, `exec_approvals_{set,node_set}`, `plugin_approval_resolve`
 - **Self-update**: `update_run` (gateway-wide, may interrupt sessions)
+
+## Examples
+
+Copy-paste prompts you can drop into Claude after the MCP is paired. Each one targets the corresponding tool and shows the kind of natural-language phrasing that resolves to a concrete call.
+
+### Health & sanity
+
+```
+> Run a full openclaw health check.
+```
+
+→ Calls `openclaw_health`, reports MCP version, gateway server version, paired device fingerprint, granted scopes, and how recently the last successful call ran.
+
+```
+> What gateway methods do I have access to right now?
+```
+
+→ Calls `openclaw_introspect`, returns the 128 JSON-RPC methods + 24 events the gateway publishes in its `hello-ok`.
+
+### Cron
+
+```
+> List all openclaw cron jobs, including disabled ones.
+```
+
+→ `openclaw_cron_list({ enabled: "all" })`.
+
+```
+> Show me the last 5 runs of the spartners-veille-prospects cron — compact mode, just the summaries.
+```
+
+→ `openclaw_cron_runs({ id: "<job-id>", limit: 5, compact: true })` — summaries truncated to 200 chars, each entry gets a `runAtAgo: "3d ago"` field.
+
+```
+> Create a cron that runs every Friday at 1pm Paris and posts a summary to Telegram group -5152945874.
+```
+
+→ Generates an `openclaw_cron_add` payload with the right `schedule.kind: "cron"`, `expr: "0 13 * * 5"`, `tz: "Europe/Paris"`, and `delivery.mode: "announce"`.
+
+### Sessions
+
+```
+> List the 10 most recent active openclaw sessions, ranked by last activity.
+```
+
+→ `openclaw_sessions_list({ limit: 10, sortBy: "updatedAt", sortDir: "desc" })`.
+
+```
+> Show me the last 8 messages of session agent:main:cron:<id>.
+```
+
+→ `openclaw_sessions_preview({ keys: ["agent:main:cron:<id>"] })` — returns role/text turns straight from the gateway.
+
+### Agents & channels
+
+```
+> List the agents configured on this gateway and which model they use.
+```
+
+→ `openclaw_agents_list`.
+
+```
+> What's the connection state of my Telegram channel?
+```
+
+→ `openclaw_channels_status`.
+
+### Escape hatch
+
+```
+> Use openclaw_call to invoke "config.schema" with no params and return the keys it exposes.
+```
+
+→ Useful when a gateway-side method doesn't yet have a typed wrapper, or you want to inspect a feature still in beta.
+
+## Resilience
+
+`request()` retries transient errors (network drop, ws close, timeout, DNS) with **exponential backoff**: 1s → 2s → 4s, max 4 attempts. Non-retryable errors (`PAIRING_REQUIRED`, `INVALID`, `MISSING_SCOPE`, etc.) fail fast — no point retrying a permission issue. Set `OPENCLAW_DEBUG=1` to see retry decisions in stderr.
+
+The client tracks `lastSuccessAtMs` for `openclaw_health`'s `lastSuccessAgo` field — useful for "is the gateway still talking to me?" debug.
 
 ### Schema looseness
 

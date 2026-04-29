@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { GatewayClient } from "../gateway/client.js";
+import { formatAgo } from "../format.js";
+import { getMcpVersion } from "../version.js";
 import type { ToolDef } from "./cron.js";
 
 export function buildStatusTools(client: GatewayClient): ToolDef[] {
@@ -14,9 +16,34 @@ export function buildStatusTools(client: GatewayClient): ToolDef[] {
   const health: ToolDef = {
     name: "openclaw_health",
     description:
-      "Get the gateway health probe (component-level OK/degraded/failed). Wraps `health`. Read-only.",
+      "Combined health probe — server-side `health` JSON-RPC plus client-side metadata (MCP version, device pairing state, gateway URL, last successful call). Read-only. Use this for a one-shot 'is everything OK?' check.",
     inputSchema: z.object({}).passthrough(),
-    handler: async () => client.request("health", {}),
+    handler: async () => {
+      let gateway: unknown = null;
+      let gatewayError: string | null = null;
+      try {
+        gateway = await client.request("health", {});
+      } catch (err) {
+        gatewayError = err instanceof Error ? err.message : String(err);
+      }
+      const hello = client.getLastHello();
+      const device = client.getDevice();
+      const lastSuccessAtMs = client.getLastSuccessAtMs();
+      return {
+        gateway,
+        gatewayError,
+        client: {
+          mcpVersion: getMcpVersion(),
+          gatewayId: client.getGatewayId(),
+          server: hello?.server ?? null,
+          device: device
+            ? { deviceId: device.deviceId, fingerprint: device.deviceId.slice(0, 16) }
+            : null,
+          lastSuccessAtMs,
+          lastSuccessAgo: formatAgo(lastSuccessAtMs),
+        },
+      };
+    },
   };
 
   const lastHeartbeat: ToolDef = {
