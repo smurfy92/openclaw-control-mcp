@@ -101,42 +101,48 @@ export function buildCronTools(client: GatewayClient): ToolDef[] {
   const cronAdd: ToolDef = {
     name: "openclaw_cron_add",
     description:
-      "Create a new OpenClaw cron job. Wraps `cron.add`. The `job` payload mirrors the Control panel form: name, schedule (every / cron expr), payload kind (agentTurn/systemEvent), delivery target.",
+      "Create a new OpenClaw cron job. Wraps `cron.add`. Field names match the gateway wire format (verified by the Control panel SPA + live calls), NOT the README placeholders sometimes seen in the MCP source: schedule uses `expr`/`tz` (cron) or `everyMs` (every) or `at` (exact); payload.agentTurn uses `message` and `timeoutSeconds`. Examples: `{ schedule: { kind: \"cron\", expr: \"0 13 * * 5\", tz: \"Europe/Paris\" }, payload: { kind: \"agentTurn\", message: \"...\", timeoutSeconds: 180 } }`.",
     inputSchema: z.object({
       job: z
         .object({
-          name: z.string().min(1),
-          id: z.string().optional(),
+          name: z.string().min(1).describe("Job name shown in the Control panel"),
+          id: z.string().optional().describe("Optional explicit id; gateway generates one if omitted"),
           schedule: z
             .object({
               kind: z.enum(["every", "cron", "exact"]),
-              cronExpr: z.string().optional(),
-              cronTz: z.string().optional(),
-              everyAmount: z.number().int().positive().optional(),
-              everyUnit: z.enum(["seconds", "minutes", "hours", "days"]).optional(),
-              scheduleAt: z.string().optional(),
+              // kind: "cron"
+              expr: z.string().optional().describe("5-field cron expression, e.g. '0 9 * * 5'. Required when kind='cron'."),
+              tz: z.string().optional().describe("IANA timezone, e.g. 'Europe/Paris'. Used with kind='cron'."),
+              // kind: "every"
+              everyMs: z.number().int().positive().optional().describe("Interval in milliseconds. Required when kind='every'."),
+              // kind: "exact"
+              at: z.string().optional().describe("RFC3339 timestamp. Required when kind='exact'."),
             })
             .passthrough(),
           payload: z
             .object({
               kind: z.enum(["agentTurn", "systemEvent"]),
-              text: z.string().optional(),
-              model: z.string().optional(),
+              // agentTurn shape (matches monthly-token-report, spartners-veille-prospects, etc.)
+              message: z.string().optional().describe("The text the agent receives at fire time. Used with kind='agentTurn'."),
+              timeoutSeconds: z.number().int().positive().optional().describe("Hard cap for the agent run. Default agentic monitors should use ≥120s (cold-start ~10-15s)."),
+              model: z.string().optional().describe("Override the default model for this job, e.g. 'claude-sonnet-4-6'."),
+              // systemEvent shape
+              text: z.string().optional().describe("Event text (used with kind='systemEvent' and a few internal agentTurn flavors)."),
               thinking: z.string().optional(),
               lightContext: z.boolean().optional(),
             })
             .passthrough(),
           delivery: z
             .object({
-              mode: z.enum(["announce", "direct", "none"]).optional(),
-              channel: z.string().optional(),
-              to: z.string().optional(),
-              accountId: z.string().optional(),
+              mode: z.enum(["announce", "direct", "none"]).optional().describe("'announce' broadcasts to the configured channel; 'direct' sends as DM; 'none' keeps the result internal."),
+              channel: z.string().optional().describe("Channel name, e.g. 'telegram', 'email', 'webchat'."),
+              to: z.string().optional().describe("Channel-specific recipient, e.g. a Telegram chat id (-1001234567890) or an email address."),
+              accountId: z.string().optional().describe("Channel account id when several are configured."),
             })
             .passthrough()
             .optional(),
-          enabled: z.boolean().optional(),
-          deleteAfterRun: z.boolean().optional(),
+          enabled: z.boolean().optional().describe("Default true if omitted."),
+          deleteAfterRun: z.boolean().optional().describe("Self-delete after one fire — useful for one-shot reminders."),
         })
         .passthrough(),
     }),
