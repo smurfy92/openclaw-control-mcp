@@ -4,7 +4,7 @@
   "description": "MCP server bridging Claude Code to the OpenClaw gateway management plane (cron, sessions, agents, channels, skills, config, …) via WebSocket JSON-RPC. Wraps all 128 published methods.",
   "type": "module",
   "bin": {
-    "openclaw-control-mcp": "./dist/index.js"
+    "openclaw-control-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "repository": {

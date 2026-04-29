@@ -1,8 +1,11 @@
 # openclaw-control-mcp
 
-MCP server bridging Claude Code (or any MCP client) to the OpenClaw gateway management plane (cron, sessions, agents, channels) via WebSocket JSON-RPC.
+[![npm](https://img.shields.io/npm/v/openclaw-control-mcp.svg)](https://www.npmjs.com/package/openclaw-control-mcp)
+[![license](https://img.shields.io/npm/l/openclaw-control-mcp.svg)](./LICENSE)
 
-The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrapper talks the JSON-RPC protocol used by the OpenClaw Control panel SPA, so you can list and trigger cron jobs (and more) directly from the assistant.
+MCP server bridging Claude Code (or any MCP client) to the OpenClaw gateway management plane via WebSocket JSON-RPC. **134 typed tools wrapping all 128 JSON-RPC methods** the gateway publishes — cron, sessions, agents, channels, chat, logs, models, usage, status/health, config, secrets, skills, exec/plugin approvals, wizard, doctor memory, nodes, voice (TTS / talk / voicewake) — plus device pairing and in-chat setup.
+
+The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrapper talks the JSON-RPC protocol used by the OpenClaw Control panel SPA, so you can operate on the full management plane (list / trigger / configure jobs, sessions, agents, channels …) directly from the assistant.
 
 ## Status
 
@@ -101,33 +104,77 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 
 ## Tools
 
+134 typed tools wrapping the **128 JSON-RPC methods** the gateway publishes (and 2 standalone introspection tools). Run `openclaw_introspect` once paired to see the live list of methods + events on your specific gateway.
+
+### Introspection (no scopes required)
+
+| Tool | Notes |
+|---|---|
+| `openclaw_introspect` | Returns server version, your role/scopes, and the full `methods[]` / `events[]` list the gateway publishes in its `hello-ok`. |
+| `openclaw_call` | **Escape hatch** — call any JSON-RPC method with arbitrary params. Useful when the gateway adds new methods between releases. Prefer typed wrappers when they exist. |
+
 ### Setup (no scopes required)
 
 | Tool | Notes |
 |---|---|
-| `openclaw_setup` | Persist `{ gatewayUrl, gatewayToken, gatewayPassword? }` to local config. Closes any active connection so the next call uses the new credentials. |
+| `openclaw_setup` | Persist `{ gatewayUrl, gatewayToken, gatewayPassword? }` to local config. |
 | `openclaw_setup_show` | Report effective config (env vs store), without printing tokens. |
 | `openclaw_setup_clear` | Wipe persisted gateway config. Device identity + tokens are kept. |
 
-### Pairing / device
+### Device & pairing (`device.pair.*`, `device.token.*`)
 
-| Tool | JSON-RPC method | Notes |
+`openclaw_device_status` / `openclaw_device_pair_list` / `_pair_approve` / `_pair_reject` / `_pair_remove` / `openclaw_device_token_revoke` / `_token_rotate`. Manages your local Ed25519 identity and the per-gateway tokens it's been issued.
+
+### Coverage by domain (require `operator.read` / `operator.write` / `operator.admin`)
+
+| Domain | Tools | JSON-RPC methods wrapped |
 |---|---|---|
-| `openclaw_device_status` | (local + `connect`) | Reports local device id, pending pairing request id, paired state, granted scopes. Re-runs a connect each call so it doubles as "retry pairing after approval". |
-| `openclaw_device_pair_list` | `device.pair.list` | List pending + paired devices on the gateway. Requires `operator.read`. |
-| `openclaw_device_pair_approve` | `device.pair.approve` | Approve a pending request by id. Requires `operator.write`. |
-| `openclaw_device_pair_reject` | `device.pair.reject` | Reject a pending request by id. |
+| `cron` | 7 | `list` `status` `run` `runs` `add` `update` `remove` |
+| `sessions` | 17 | `list` `preview` `create` `patch` `send` `abort` `reset` `delete` `compact` `compaction.{list,get,restore,branch}` `subscribe/unsubscribe` `messages.subscribe/unsubscribe` |
+| `agents` | 7 | `list` `create` `update` `delete` `files.{list,get,set}` |
+| `chat` | 3 | `send` `history` `abort` |
+| `channels` | 2 | `status` `logout` |
+| `logs` | 1 | `tail` |
+| `models` | 1 | `list` |
+| `usage` | 2 | `status` `cost` |
+| Root status | 12 | `status` `health` `last-heartbeat` `set-heartbeats` `system-presence` `system-event` `wake` `send` `agent` `agent.identity.get` `agent.wait` `gateway.identity.get` |
+| `config` | 6 | `get` `set` `patch` `apply` `schema` `schema.lookup` |
+| `secrets` | 2 | `reload` `resolve` |
+| `skills` | 6 | `status` `search` `detail` `install` `update` `bins` |
+| `tools` | 2 | `tools.catalog` `tools.effective` |
+| `exec.approval` | 9 | `list` `get` `request` `resolve` `waitDecision` + global / per-node policy `get/set` |
+| `plugin.approval` | 4 | `list` `request` `resolve` `waitDecision` |
+| `wizard` | 4 | `start` `next` `cancel` `status` |
+| `doctor.memory` | 7 | `status` `dreamDiary` `backfillDreamDiary` `dedupeDreamDiary` `repairDreamingArtifacts` `resetDreamDiary` `resetGroundedShortTerm` |
+| `node` | 16 | `list` `describe` `invoke` + `invoke.result` `event` `rename` `pair.{request,verify,approve,reject,list}` `pending.{ack,drain,enqueue,pull}` `canvas.capability.refresh` |
+| `tts` | 6 | `status` `enable` `disable` `providers` `setProvider` `convert` |
+| `talk` | 3 | `config` `mode` `speak` |
+| `voicewake` | 2 | `get` `set` |
+| Misc | 3 | `update.run` `commands.list` `message.action` |
 
-### Cron (require operator.read / operator.write)
+Tool names follow `openclaw_<domain>_<method>`. Method-name dots become underscores: `cron.list` → `openclaw_cron_list`, `sessions.compaction.restore` → `openclaw_sessions_compaction_restore`.
 
-| Tool | JSON-RPC method | Notes |
-|---|---|---|
-| `openclaw_cron_list` | `cron.list` | Filter by enabled state, search query, paginate |
-| `openclaw_cron_status` | `cron.status` | Scheduler enabled flag + next run |
-| `openclaw_cron_run` | `cron.run` | Trigger an immediate run by id |
-| `openclaw_cron_runs` | `cron.runs` | Recent runs of a job |
-| `openclaw_cron_remove` | `cron.remove` | **Destructive** |
-| `openclaw_cron_add` | `cron.add` | Create new job with schedule + payload |
+### Destructive tools
+
+These carry destructive side effects (data loss, service interruption, revoked access). Their `description` is marked accordingly so Claude Code's confirmation gate prompts before each call:
+
+- **Cron**: `cron_remove`, `cron_run` (real execution), `cron_update`
+- **Sessions**: `sessions_{abort,reset,delete,compaction_restore}`
+- **Agents**: `agents_{delete,files_set}`
+- **Chat**: `chat_abort`
+- **Channels**: `channels_logout`
+- **Device**: `device_{pair_remove,token_revoke,token_rotate}`
+- **Config**: `config_{set,patch,apply}`
+- **Secrets**: `secrets_resolve` (returns secret material)
+- **Doctor memory**: `doctor_memory_{resetDreamDiary,resetGroundedShortTerm,repairDreamingArtifacts,backfillDreamDiary,dedupeDreamDiary}`
+- **Node**: `node_{invoke,rename,pending_drain,pending_enqueue,pending_ack,pair_approve,pair_reject}`
+- **Skills**: `skills_{install,update}`
+- **Approvals**: `exec_approval_resolve`, `exec_approvals_{set,node_set}`, `plugin_approval_resolve`
+- **Self-update**: `update_run` (gateway-wide, may interrupt sessions)
+
+### Schema looseness
+
+Most v0.3.0 wrappers use `z.passthrough()` for params — they accept the documented fields plus anything else, and pass them through to the gateway. This trades strict client-side validation for forward-compat: as the gateway evolves, calls don't break on new fields. The downside is you'll only learn about a wrong field when the gateway rejects the request. If you hit a "missing required property" error, look at the gateway's response — it tells you the exact wire shape — and either correct your call, or open an issue / PR to tighten the wrapper's Zod schema.
 
 ## Roadmap
 
