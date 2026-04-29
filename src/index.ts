@@ -206,6 +206,7 @@ async function runHealthDiagnostic() {
     mcpVersion: string;
     gatewayUrl: string | null;
     tokenSet: boolean;
+    secretsLocation: string;
     paired: boolean;
     scopes: string[];
     server: { version?: string; connId?: string } | null;
@@ -217,6 +218,7 @@ async function runHealthDiagnostic() {
     mcpVersion: getMcpVersion(),
     gatewayUrl: url,
     tokenSet,
+    secretsLocation: await store.secretsLocation(),
     paired: false,
     scopes: [],
     server: null,

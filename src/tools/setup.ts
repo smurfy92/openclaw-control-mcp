@@ -65,12 +65,14 @@ export function buildSetupTools(store: Store, hooks: SetupHooks): ToolDef[] {
       const stored = await store.loadConfig();
       const effectiveUrl = env.gatewayUrl ?? stored.gatewayUrl;
       const effectiveSource = env.gatewayUrl ? "env" : stored.gatewayUrl ? "store" : "none";
+      const secretsLocation = await store.secretsLocation();
       return {
         effective: {
           gatewayUrl: effectiveUrl,
           tokenSet: env.tokenSet || !!stored.gatewayToken,
           passwordSet: env.passwordSet || !!stored.gatewayPassword,
           source: effectiveSource,
+          secretsLocation,
         },
         env: {
           gatewayUrl: env.gatewayUrl ?? null,
