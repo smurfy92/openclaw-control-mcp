@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-04-29
+
+### Added
+
+- **Multi-instance gateway configs** — a single MCP can manage multiple OpenClaw gateways (e.g. `perso` and `work`). Existing single-instance setups auto-migrate to `configs.default`. Pass `instance` to `openclaw_setup` / `openclaw_setup_show` / `openclaw_setup_clear` to target a specific one.
+- **`openclaw_setup_list`** — enumerate every persisted instance (name + URL + token-set state, never values).
+- **`openclaw_setup_select_default`** — switch the active default instance. Subsequent tool calls (cron, sessions, agents, …) automatically route to the new default after this call. Existing client connections are closed so they re-handshake with the new credentials.
+- **`Store.loadConfigs()`**, **`Store.setDefaultInstance()`**, **multi-instance keychain key namespacing** (`gateway-token:<instance>` instead of `gateway-token`).
+- **Opt-in OS keychain backend** for device + gateway secrets (`OPENCLAW_USE_KEYCHAIN=1`) — macOS `security` CLI, Linux `secret-tool`, Windows/no-keychain falls back to legacy plain JSON. `Store.secretsLocation()` exposes the active backend through `openclaw_setup_show` and `--health`.
+
+### Changed
+
+- **`cron.add` Zod schema aligned with the gateway wire format** — `expr` / `tz` instead of `cronExpr` / `cronTz`, `everyMs` instead of `everyAmount` + `everyUnit`, `at` instead of `scheduleAt`, `payload.message` + `payload.timeoutSeconds` instead of `payload.text` only. Fixes silent rejection from the gateway when callers trusted the schema's old field names. (`openclaw_cron_update` was already aligned in 0.3.0.)
+- **`Store` schema bumped from v1 to v2** with auto-migration on first load.
+- **Session + agent tool descriptions enriched** — `key` vs `sessionId`, observed `status` values, `text`/`message` and `content`/`body` aliases documented inline.
+
+### Internals
+
+- 76 vitest cases passing (66 → 76, +12 cron schemas, +10 multi-instance store, +14 keychain).
+- `readShape()` accepts `version: 1` and `version: 2` for forward / backward compat.
+
 ## [0.3.2] — 2026-04-29
 
 ### Added

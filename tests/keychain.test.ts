@@ -130,22 +130,22 @@ describe("Store + InMemoryKeychain — secret splitting", () => {
       gatewayToken: "TOKEN-CFG",
       gatewayPassword: "PWD-CFG",
     });
-    expect(kc.entries.get("gateway-token")).toBe("TOKEN-CFG");
-    expect(kc.entries.get("gateway-password")).toBe("PWD-CFG");
+    expect(kc.entries.get("gateway-token:default")).toBe("TOKEN-CFG");
+    expect(kc.entries.get("gateway-password:default")).toBe("PWD-CFG");
     const json = JSON.parse(readFileSync(join(dir, "store.json"), "utf8")) as {
-      config: { gatewayUrl: string; gatewayToken: string; gatewayPassword: string };
+      configs: Record<string, { gatewayUrl: string; gatewayToken: string; gatewayPassword: string }>;
     };
-    expect(json.config.gatewayUrl).toBe("wss://x"); // non-secret stays
-    expect(json.config.gatewayToken).toBe("");
-    expect(json.config.gatewayPassword).toBe("");
+    expect(json.configs.default.gatewayUrl).toBe("wss://x"); // non-secret stays
+    expect(json.configs.default.gatewayToken).toBe("");
+    expect(json.configs.default.gatewayPassword).toBe("");
   });
 
   it("clearConfig wipes both the JSON config and the keychain secrets", async () => {
     await store.saveConfig({ gatewayUrl: "wss://x", gatewayToken: "T", gatewayPassword: "P" });
-    expect(kc.entries.has("gateway-token")).toBe(true);
+    expect(kc.entries.has("gateway-token:default")).toBe(true);
     await store.clearConfig();
-    expect(kc.entries.has("gateway-token")).toBe(false);
-    expect(kc.entries.has("gateway-password")).toBe(false);
+    expect(kc.entries.has("gateway-token:default")).toBe(false);
+    expect(kc.entries.has("gateway-password:default")).toBe(false);
   });
 
   it("secretsLocation reflects the active backend", async () => {

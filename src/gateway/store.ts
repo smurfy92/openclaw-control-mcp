@@ -20,12 +20,20 @@ export type GatewayConfigShape = {
   savedAtMs?: number;
 };
 
+/** v2 of the on-disk shape — supports multi-instance gateway configs. */
 export type StoreShape = {
-  version: 1;
+  version: 1 | 2;
   device?: DeviceIdentity & { createdAtMs: number };
-  tokens?: Record<string, DeviceTokenEntry>;
+  tokens?: Record<string, DeviceTokenEntry>; // keyed by gatewayId (sha256(url)) — already multi-instance
+  // v1 only (legacy single-instance) — auto-migrated to `configs.default` on load.
   config?: GatewayConfigShape;
+  // v2: named configs. Used keys are arbitrary ('default', 'work', 'perso', …).
+  configs?: Record<string, GatewayConfigShape>;
+  // v2: which named instance is the active default for tools that don't pass an `instance` param.
+  defaultInstance?: string;
 };
+
+export const DEFAULT_INSTANCE = "default";
 
 const XDG_BASE = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
 const LEGACY_DIR = join(XDG_BASE, "openclaw-claw-mcp");
@@ -76,19 +84,33 @@ export class Store {
     const legacy =
       LEGACY_DIR !== dirname(this.path) ? await this.readShape(join(LEGACY_DIR, "store.json")) : null;
     let state: StoreShape;
-    if (!primary && !legacy) state = { version: 1 };
+    if (!primary && !legacy) state = { version: 2 };
     else if (primary && !legacy) state = primary;
     else if (!primary && legacy) state = legacy;
     else {
       // merge: primary fields win, legacy fills in missing pieces (device + tokens are typically only in legacy
       // during migration; config is the new piece written to primary)
-      state = { version: 1 };
+      state = { version: 2 };
       state.device = primary?.device ?? legacy?.device;
       state.tokens = { ...(legacy?.tokens ?? {}), ...(primary?.tokens ?? {}) };
       if (Object.keys(state.tokens).length === 0) delete state.tokens;
-      state.config = primary?.config ?? legacy?.config;
-      if (!state.config) delete state.config;
+      // For configs: prefer primary's v2 `configs` if present, else migrate from primary.config or legacy.config
+      state.configs = primary?.configs ?? legacy?.configs;
+      state.defaultInstance = primary?.defaultInstance ?? legacy?.defaultInstance;
+      const legacySingle = primary?.config ?? legacy?.config;
+      if (legacySingle && !state.configs) {
+        state.configs = { [DEFAULT_INSTANCE]: legacySingle };
+        state.defaultInstance = DEFAULT_INSTANCE;
+      }
     }
+
+    // v1 -> v2 migration: lift `state.config` into `state.configs.default` and drop the singular field.
+    if (state.config && !state.configs) {
+      state.configs = { [DEFAULT_INSTANCE]: state.config };
+      state.defaultInstance = state.defaultInstance ?? DEFAULT_INSTANCE;
+    }
+    if (state.config) delete state.config;
+    state.version = 2;
 
     const kc = await this.getKeychain();
     if (kc) await this.hydrateSecretsFromKeychain(state, kc);
@@ -99,7 +121,8 @@ export class Store {
     try {
       const raw = await readFile(path, "utf8");
       const parsed = JSON.parse(raw) as StoreShape;
-      return parsed?.version === 1 ? parsed : null;
+      // Accept any known version. v1 (legacy single-config) is migrated by load().
+      return parsed?.version === 1 || parsed?.version === 2 ? parsed : null;
     } catch {
       return null;
     }
@@ -138,14 +161,16 @@ export class Store {
         }
       }
     }
-    if (cleaned.config) {
-      if (cleaned.config.gatewayToken) {
-        await kc.set("gateway-token", cleaned.config.gatewayToken);
-        cleaned.config = { ...cleaned.config, gatewayToken: "" };
-      }
-      if (cleaned.config.gatewayPassword) {
-        await kc.set("gateway-password", cleaned.config.gatewayPassword);
-        cleaned.config = { ...cleaned.config, gatewayPassword: "" };
+    if (cleaned.configs) {
+      for (const [instance, cfg] of Object.entries(cleaned.configs)) {
+        if (cfg.gatewayToken) {
+          await kc.set(`gateway-token:${instance}`, cfg.gatewayToken);
+          cleaned.configs[instance] = { ...cfg, gatewayToken: "" };
+        }
+        if (cfg.gatewayPassword) {
+          await kc.set(`gateway-password:${instance}`, cfg.gatewayPassword);
+          cleaned.configs[instance] = { ...cleaned.configs[instance], gatewayPassword: "" };
+        }
       }
     }
     return cleaned;
@@ -170,14 +195,25 @@ export class Store {
         }
       }
     }
-    if (state.config) {
-      if (!state.config.gatewayToken) {
-        const v = await kc.get("gateway-token");
-        if (v) state.config.gatewayToken = v;
-      }
-      if (!state.config.gatewayPassword) {
-        const v = await kc.get("gateway-password");
-        if (v) state.config.gatewayPassword = v;
+    if (state.configs) {
+      for (const [instance, cfg] of Object.entries(state.configs)) {
+        if (!cfg.gatewayToken) {
+          const v = await kc.get(`gateway-token:${instance}`);
+          if (v) cfg.gatewayToken = v;
+          // Legacy fallback: pre-0.4.0 keychain entries used un-namespaced keys.
+          else if (instance === DEFAULT_INSTANCE) {
+            const legacy = await kc.get("gateway-token");
+            if (legacy) cfg.gatewayToken = legacy;
+          }
+        }
+        if (!cfg.gatewayPassword) {
+          const v = await kc.get(`gateway-password:${instance}`);
+          if (v) cfg.gatewayPassword = v;
+          else if (instance === DEFAULT_INSTANCE) {
+            const legacy = await kc.get("gateway-password");
+            if (legacy) cfg.gatewayPassword = legacy;
+          }
+        }
       }
     }
   }
@@ -215,28 +251,104 @@ export class Store {
     if (kc) await kc.delete(`device-token:${gatewayId}`);
   }
 
-  async loadConfig(): Promise<GatewayConfigShape> {
+  /**
+   * Returns the full multi-instance config map, keyed by instance name. Useful
+   * for setup tools that need to enumerate everything (`openclaw_setup_list`).
+   */
+  async loadConfigs(): Promise<{
+    configs: Record<string, GatewayConfigShape>;
+    defaultInstance: string;
+  }> {
     const s = await this.load();
-    return s.config ?? {};
+    return {
+      configs: s.configs ?? {},
+      defaultInstance: s.defaultInstance ?? DEFAULT_INSTANCE,
+    };
   }
 
-  async saveConfig(cfg: GatewayConfigShape): Promise<void> {
+  /**
+   * Read one named instance's config. If `instance` is omitted, reads the
+   * current default. Returns `{}` if the requested instance doesn't exist.
+   */
+  async loadConfig(instance?: string): Promise<GatewayConfigShape> {
     const s = await this.load();
-    s.config = { ...s.config, ...cfg, savedAtMs: Date.now() };
+    const name = instance ?? s.defaultInstance ?? DEFAULT_INSTANCE;
+    return s.configs?.[name] ?? {};
+  }
+
+  /**
+   * Write / merge a config into a named instance. Default instance name is
+   * "default" (matches the v1 → v2 migration), so legacy callers that don't
+   * pass `instance` keep working.
+   */
+  async saveConfig(cfg: GatewayConfigShape, instance: string = DEFAULT_INSTANCE): Promise<void> {
+    const s = await this.load();
+    s.configs = s.configs ?? {};
+    s.configs[instance] = { ...(s.configs[instance] ?? {}), ...cfg, savedAtMs: Date.now() };
+    if (!s.defaultInstance) s.defaultInstance = instance;
     await this.save(s);
   }
 
-  async clearConfig(): Promise<void> {
+  /**
+   * Clear one specific instance, or all of them if `instance` is omitted. Also
+   * clears the matching keychain secrets when keychain is active. If the
+   * cleared instance was the default and other instances still exist, picks an
+   * arbitrary remaining one as the new default.
+   */
+  async clearConfig(instance?: string): Promise<void> {
     const s = await this.load();
-    if (s.config) {
-      delete s.config;
-      await this.save(s);
+    // Capture instance names BEFORE we mutate state, so we know which keychain entries to wipe.
+    const knownInstances = Object.keys(s.configs ?? {});
+    let touched = false;
+    if (instance == null) {
+      // Clear everything.
+      if (s.configs) {
+        delete s.configs;
+        delete s.defaultInstance;
+        touched = true;
+      }
+    } else if (s.configs?.[instance]) {
+      delete s.configs[instance];
+      if (s.defaultInstance === instance) {
+        const remaining = Object.keys(s.configs);
+        s.defaultInstance = remaining[0];
+      }
+      if (Object.keys(s.configs).length === 0) {
+        delete s.configs;
+        delete s.defaultInstance;
+      }
+      touched = true;
     }
+    if (touched) await this.save(s);
+
     const kc = await this.getKeychain();
-    if (kc) {
-      await kc.delete("gateway-token");
-      await kc.delete("gateway-password");
+    if (!kc) return;
+    if (instance == null) {
+      // Best-effort: forget every namespaced + legacy secret for configs we knew about.
+      const keysToDelete = new Set<string>(["gateway-token", "gateway-password"]);
+      for (const inst of knownInstances) {
+        keysToDelete.add(`gateway-token:${inst}`);
+        keysToDelete.add(`gateway-password:${inst}`);
+      }
+      for (const k of keysToDelete) await kc.delete(k);
+    } else {
+      await kc.delete(`gateway-token:${instance}`);
+      await kc.delete(`gateway-password:${instance}`);
+      if (instance === DEFAULT_INSTANCE) {
+        // Also wipe any legacy un-namespaced entries, just in case.
+        await kc.delete("gateway-token");
+        await kc.delete("gateway-password");
+      }
     }
+  }
+
+  async setDefaultInstance(instance: string): Promise<void> {
+    const s = await this.load();
+    if (!s.configs?.[instance]) {
+      throw new Error(`unknown instance '${instance}' — use openclaw_setup to create it first`);
+    }
+    s.defaultInstance = instance;
+    await this.save(s);
   }
 
   pathInfo(): string {

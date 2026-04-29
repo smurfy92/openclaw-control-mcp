@@ -48,64 +48,97 @@ function debug(msg: string) {
 
 const store = new Store();
 
-let client: GatewayClient | null = null;
+// Client cache, one entry per named instance. When the user switches the
+// default instance (or env-vars override), the corresponding entry is dropped
+// so the next call re-handshakes with fresh credentials.
+const clients = new Map<string, GatewayClient>();
+// Tracks the resolved name of the most-recently-used client, for the no-arg
+// shim helpers (getDevice, getLastHello, …).
+let activeInstance: string | null = null;
+const ENV_INSTANCE = "__env__";
 
-async function ensureClient(): Promise<GatewayClient> {
-  if (client) return client;
+async function ensureClient(instance?: string): Promise<{ client: GatewayClient; name: string }> {
+  // Env-var override is treated as a synthetic "__env__" instance — wins when set.
   let url = ENV_URL;
   let token = ENV_TOKEN;
   let password = ENV_PASSWORD;
-  if (!url) {
-    const cfg = await store.loadConfig();
+  let resolvedName = ENV_INSTANCE;
+  if (url) {
+    // Use env vars regardless of `instance` param — env wins over store.
+  } else {
+    const { configs, defaultInstance } = await store.loadConfigs();
+    resolvedName = instance ?? defaultInstance;
+    const cfg = configs[resolvedName];
+    if (!cfg?.gatewayUrl) {
+      throw new Error(
+        instance
+          ? `OpenClaw instance '${instance}' is not configured. Use openclaw_setup({ instance: '${instance}', … }) to create it, or openclaw_setup_list to see what's available.`
+          : "OpenClaw gateway not configured. Set OPENCLAW_GATEWAY_URL/OPENCLAW_GATEWAY_TOKEN env vars or call openclaw_setup({gatewayUrl, gatewayToken}) to persist a default instance.",
+      );
+    }
     url = cfg.gatewayUrl;
-    token = token ?? cfg.gatewayToken;
-    password = password ?? cfg.gatewayPassword;
+    token = cfg.gatewayToken;
+    password = cfg.gatewayPassword;
   }
-  if (!url) {
-    throw new Error(
-      "OpenClaw gateway not configured. Set OPENCLAW_GATEWAY_URL/OPENCLAW_GATEWAY_TOKEN env vars when launching this MCP, or call openclaw_setup({gatewayUrl, gatewayToken}) to persist them.",
-    );
+  let client = clients.get(resolvedName);
+  if (!client) {
+    client = new GatewayClient({ url, token, password, timeoutMs: TIMEOUT, store, debug });
+    clients.set(resolvedName, client);
   }
-  client = new GatewayClient({
-    url,
-    token,
-    password,
-    timeoutMs: TIMEOUT,
-    store,
-    debug,
-  });
-  return client;
+  activeInstance = resolvedName;
+  return { client, name: resolvedName };
 }
 
-async function reconfigure() {
-  if (client) {
-    await client.close();
-    client = null;
+async function reconfigure(instance?: string) {
+  if (instance == null) {
+    // Drop everything — default for setup_clear with no arg.
+    for (const c of clients.values()) await c.close().catch(() => {});
+    clients.clear();
+    activeInstance = null;
+    return;
   }
+  const c = clients.get(instance);
+  if (c) {
+    await c.close().catch(() => {});
+    clients.delete(instance);
+    if (activeInstance === instance) activeInstance = null;
+  }
+  // Also drop the env-var synthetic instance so it gets re-resolved next call.
+  const envClient = clients.get(ENV_INSTANCE);
+  if (envClient) {
+    await envClient.close().catch(() => {});
+    clients.delete(ENV_INSTANCE);
+  }
+}
+
+function activeClient(): GatewayClient | null {
+  if (!activeInstance) return null;
+  return clients.get(activeInstance) ?? null;
 }
 
 const clientShim: GatewayClient = {
   request: (async (method: string, params?: unknown) => {
-    const c = await ensureClient();
+    const { client: c } = await ensureClient();
     return c.request(method, params);
   }) as GatewayClient["request"],
   connect: (async () => {
-    const c = await ensureClient();
+    const { client: c } = await ensureClient();
     return c.connect();
   }) as GatewayClient["connect"],
   close: (async () => {
-    if (client) await client.close();
+    const c = activeClient();
+    if (c) await c.close();
   }) as GatewayClient["close"],
-  getDevice: () => client?.getDevice() ?? null,
-  getLastHello: () => client?.getLastHello() ?? null,
-  getPairingPending: () => client?.getPairingPending() ?? null,
-  getGatewayId: () => client?.getGatewayId() ?? "<unconfigured>",
-  getLastSuccessAtMs: () => client?.getLastSuccessAtMs() ?? null,
+  getDevice: () => activeClient()?.getDevice() ?? null,
+  getLastHello: () => activeClient()?.getLastHello() ?? null,
+  getPairingPending: () => activeClient()?.getPairingPending() ?? null,
+  getGatewayId: () => activeClient()?.getGatewayId() ?? "<unconfigured>",
+  getLastSuccessAtMs: () => activeClient()?.getLastSuccessAtMs() ?? null,
 } as unknown as GatewayClient;
 
 const setupTools = buildSetupTools(store, {
-  reconfigure: async () => {
-    await reconfigure();
+  reconfigure: async (_cfg, instance) => {
+    await reconfigure(instance);
   },
   envOverride: () => ({
     gatewayUrl: ENV_URL,
@@ -179,7 +212,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 const transport = new StdioServerTransport();
 
 async function shutdown() {
-  if (client) await client.close();
+  for (const c of clients.values()) await c.close().catch(() => {});
   process.exit(0);
 }
 process.on("SIGINT", shutdown);
@@ -231,7 +264,7 @@ async function runHealthDiagnostic() {
     return result;
   }
   try {
-    const c = await ensureClient();
+    const { client: c } = await ensureClient();
     await c.connect();
     await c.request("health", {});
     const hello = c.getLastHello();
