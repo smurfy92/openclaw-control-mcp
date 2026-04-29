@@ -394,7 +394,8 @@ export class GatewayClient {
   }
 
   async request<T = unknown>(method: string, params: unknown = undefined): Promise<T> {
-    const maxAttempts = 4; // 1 initial + 3 retries (1s, 2s, 4s)
+    const maxAttempts = readEnvInt("OPENCLAW_RETRY_ATTEMPTS", 4, 1, 10);
+    const baseMs = readEnvInt("OPENCLAW_RETRY_BASE_MS", 1000, 100, 60_000);
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -404,8 +405,10 @@ export class GatewayClient {
         return result;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        if (attempt === maxAttempts || !isTransientError(lastError)) throw lastError;
-        const delayMs = Math.min(1000 * 2 ** (attempt - 1), 60_000);
+        if (attempt === maxAttempts || !isTransientError(lastError)) {
+          throw enrichRequestError(lastError, method, attempt, maxAttempts);
+        }
+        const delayMs = Math.min(baseMs * 2 ** (attempt - 1), 60_000);
         this.log(`request '${method}' attempt ${attempt}/${maxAttempts} failed (${lastError.message}); retrying in ${delayMs}ms`);
         // Reset connection state so the next attempt re-handshakes from a clean slate
         if (this.ws) {
@@ -418,7 +421,12 @@ export class GatewayClient {
         await new Promise((r) => setTimeout(r, delayMs));
       }
     }
-    throw lastError ?? new Error(`request '${method}' failed after ${maxAttempts} attempts`);
+    throw enrichRequestError(
+      lastError ?? new Error("unknown failure"),
+      method,
+      maxAttempts,
+      maxAttempts,
+    );
   }
 
   getLastSuccessAtMs(): number | null {
@@ -430,6 +438,44 @@ export class GatewayClient {
     this.ws?.close();
     this.ws = null;
   }
+}
+
+function readEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < min || n > max) return fallback;
+  return n;
+}
+
+/**
+ * Wraps a raw request error with the JSON-RPC method name + attempt count, so
+ * the user sees `gateway request 'cron.list' failed (attempt 4/4): <reason>`
+ * instead of just `gateway not connected`. Preserves GatewayError fields and
+ * exposes the original error via `cause` for tools that want to inspect it.
+ */
+export function enrichRequestError(
+  err: Error,
+  method: string,
+  attempt: number,
+  maxAttempts: number,
+): Error {
+  const prefix = `gateway request '${method}' failed (attempt ${attempt}/${maxAttempts}): `;
+  if (err.message.startsWith(prefix)) return err; // already wrapped (defensive)
+  if (err instanceof GatewayError) {
+    const wrapped = new GatewayError({
+      code: err.code,
+      message: prefix + err.message,
+      details: err.details,
+      retryable: err.retryable,
+      retryAfterMs: err.retryAfterMs,
+    });
+    (wrapped as Error & { cause?: unknown }).cause = err;
+    return wrapped;
+  }
+  const wrapped = new Error(prefix + err.message);
+  (wrapped as Error & { cause?: unknown }).cause = err;
+  return wrapped;
 }
 
 export function isTransientError(err: Error): boolean {

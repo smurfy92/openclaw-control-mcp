@@ -6,8 +6,10 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { formatAgo } from "./format.js";
 import { GatewayClient } from "./gateway/client.js";
 import { Store } from "./gateway/store.js";
+import { getMcpVersion } from "./version.js";
 import { buildAdminTools } from "./tools/admin.js";
 import { buildAgentsTools } from "./tools/agents.js";
 import { buildChannelsTools } from "./tools/channels.js";
@@ -142,7 +144,7 @@ const tools: ToolDef[] = [
 const toolMap = new Map(tools.map((t) => [t.name, t]));
 
 const server = new Server(
-  { name: "openclaw-control-mcp", version: "0.2.0" },
+  { name: "openclaw-control-mcp", version: getMcpVersion() },
   { capabilities: { tools: {} } },
 );
 
@@ -183,5 +185,64 @@ async function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+// CLI flag: `npx -y openclaw-control-mcp --health` runs a one-shot diagnostic
+// then exits — does NOT start the stdio server. Useful for `is everything OK?`
+// without wiring the MCP into a client.
+if (process.argv.includes("--health") || process.argv.includes("-H")) {
+  const report = await runHealthDiagnostic();
+  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+
 await server.connect(transport);
 debug("openclaw-control-mcp connected via stdio");
+
+async function runHealthDiagnostic() {
+  const cfg = await store.loadConfig();
+  const url = ENV_URL ?? cfg.gatewayUrl ?? null;
+  const tokenSet = !!(ENV_TOKEN ?? cfg.gatewayToken);
+  const result: {
+    ok: boolean;
+    mcpVersion: string;
+    gatewayUrl: string | null;
+    tokenSet: boolean;
+    paired: boolean;
+    scopes: string[];
+    server: { version?: string; connId?: string } | null;
+    device: { fingerprint: string } | null;
+    lastSuccessAgo: string | null;
+    error: string | null;
+  } = {
+    ok: false,
+    mcpVersion: getMcpVersion(),
+    gatewayUrl: url,
+    tokenSet,
+    paired: false,
+    scopes: [],
+    server: null,
+    device: null,
+    lastSuccessAgo: null,
+    error: null,
+  };
+  if (!url) {
+    result.error = "OpenClaw gateway not configured. Set OPENCLAW_GATEWAY_URL/TOKEN or run openclaw_setup once.";
+    return result;
+  }
+  try {
+    const c = await ensureClient();
+    await c.connect();
+    await c.request("health", {});
+    const hello = c.getLastHello();
+    const device = c.getDevice();
+    const tokenEntry = await store.loadToken(c.getGatewayId());
+    result.ok = true;
+    result.paired = !!(tokenEntry && hello);
+    result.scopes = tokenEntry?.scopes ?? [];
+    result.server = hello?.server ?? null;
+    result.device = device ? { fingerprint: device.deviceId.slice(0, 16) } : null;
+    result.lastSuccessAgo = formatAgo(c.getLastSuccessAtMs());
+  } catch (err) {
+    result.error = err instanceof Error ? err.message : String(err);
+  }
+  return result;
+}
