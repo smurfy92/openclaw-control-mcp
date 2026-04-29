@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { GatewayClient } from "../gateway/client.js";
+import { formatAgo, truncate } from "../format.js";
 
 export type ToolDef = {
   name: string;
@@ -49,13 +50,43 @@ export function buildCronTools(client: GatewayClient): ToolDef[] {
 
   const cronRuns: ToolDef = {
     name: "openclaw_cron_runs",
-    description: "List recent runs of a specific OpenClaw cron job. Wraps `cron.runs`.",
+    description:
+      "List recent runs of a specific OpenClaw cron job. Wraps `cron.runs`. Pass `compact: true` to truncate each run's `summary` to 200 chars (saves tokens when scanning many runs); a `summaryTruncated` flag is added per entry. Each entry also gets a `runAtAgo` field (e.g. \"3h ago\") for readability.",
     inputSchema: z.object({
       id: z.string().min(1).describe("Cron job id"),
       limit: z.number().int().positive().max(500).optional(),
       offset: z.number().int().min(0).optional(),
+      compact: z.boolean().optional().describe("Truncate each run's summary to 200 chars"),
+      summaryMaxChars: z.number().int().positive().max(5000).optional().describe("Override the truncation length when compact=true (default 200)"),
     }),
-    handler: async (args) => client.request("cron.runs", args ?? {}),
+    handler: async (args) => {
+      const opts = (args ?? {}) as {
+        compact?: boolean;
+        summaryMaxChars?: number;
+        [k: string]: unknown;
+      };
+      const { compact, summaryMaxChars, ...rpcArgs } = opts;
+      const max = summaryMaxChars ?? 200;
+      const result = (await client.request("cron.runs", rpcArgs)) as {
+        entries?: Array<Record<string, unknown>>;
+        [k: string]: unknown;
+      };
+      const entries = Array.isArray(result?.entries) ? result.entries : null;
+      if (!entries) return result;
+      return {
+        ...result,
+        entries: entries.map((entry) => {
+          const enriched: Record<string, unknown> = { ...entry };
+          if (typeof entry.runAtMs === "number") enriched.runAtAgo = formatAgo(entry.runAtMs);
+          if (compact && typeof entry.summary === "string") {
+            const t = truncate(entry.summary, max);
+            enriched.summary = t.value;
+            enriched.summaryTruncated = t.truncated;
+          }
+          return enriched;
+        }),
+      };
+    },
   };
 
   const cronRemove: ToolDef = {

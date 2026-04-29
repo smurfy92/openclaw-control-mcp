@@ -84,6 +84,7 @@ export class GatewayClient {
   private gatewayId: string;
   private lastHello: HelloOkPayload | null = null;
   private pairingPending: PairingPending | null = null;
+  private lastSuccessAtMs: number | null = null;
 
   constructor(opts: GatewayClientOptions) {
     this.opts = {
@@ -393,8 +394,35 @@ export class GatewayClient {
   }
 
   async request<T = unknown>(method: string, params: unknown = undefined): Promise<T> {
-    await this.connect();
-    return this.requestRaw<T>(method, params);
+    const maxAttempts = 4; // 1 initial + 3 retries (1s, 2s, 4s)
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.connect();
+        const result = await this.requestRaw<T>(method, params);
+        this.lastSuccessAtMs = Date.now();
+        return result;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt === maxAttempts || !isTransientError(lastError)) throw lastError;
+        const delayMs = Math.min(1000 * 2 ** (attempt - 1), 60_000);
+        this.log(`request '${method}' attempt ${attempt}/${maxAttempts} failed (${lastError.message}); retrying in ${delayMs}ms`);
+        // Reset connection state so the next attempt re-handshakes from a clean slate
+        if (this.ws) {
+          try { this.ws.close(); } catch { /* ignore */ }
+          this.ws = null;
+        }
+        this.connectedPromise = null;
+        this.connectNonce = null;
+        this.flushPending(lastError);
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+    throw lastError ?? new Error(`request '${method}' failed after ${maxAttempts} attempts`);
+  }
+
+  getLastSuccessAtMs(): number | null {
+    return this.lastSuccessAtMs;
   }
 
   async close(): Promise<void> {
@@ -402,4 +430,18 @@ export class GatewayClient {
     this.ws?.close();
     this.ws = null;
   }
+}
+
+export function isTransientError(err: Error): boolean {
+  if (err instanceof GatewayError) {
+    if (err.retryable === true) return true;
+    // Server-side hints we should not retry: scope/auth/validation errors are user-fixable.
+    const code = err.code ?? "";
+    if (/INVALID|FORBIDDEN|MISSING|NOT_FOUND|PAIRING|UNAUTHENTICATED|CONFLICT/i.test(code)) return false;
+    return false;
+  }
+  // WebSocket / network / timeout / DNS errors are transient.
+  return /not connected|timed out|ws open timeout|gateway closed|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(
+    err.message,
+  );
 }

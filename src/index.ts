@@ -98,6 +98,7 @@ const clientShim: GatewayClient = {
   getLastHello: () => client?.getLastHello() ?? null,
   getPairingPending: () => client?.getPairingPending() ?? null,
   getGatewayId: () => client?.getGatewayId() ?? "<unconfigured>",
+  getLastSuccessAtMs: () => client?.getLastSuccessAtMs() ?? null,
 } as unknown as GatewayClient;
 
 const setupTools = buildSetupTools(store, {
