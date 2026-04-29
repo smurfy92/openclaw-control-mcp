@@ -1,6 +1,6 @@
 {
   "name": "openclaw-control-mcp",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MCP server bridging Claude Code to the OpenClaw gateway management plane (cron, sessions, agents, channels, skills, config, …) via WebSocket JSON-RPC. Wraps all 128 published methods.",
   "type": "module",
   "bin": {
@@ -32,7 +32,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --target node22 --dts --clean",

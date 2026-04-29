@@ -10,7 +10,7 @@ The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrap
 
 ## Status
 
-**0.3.1 / preview.** **134 typed tools wrapping the 128 JSON-RPC methods the gateway publishes** — cron, sessions, agents, channels, chat, logs, models, usage, status/health/heartbeats, config, secrets, skills, exec/plugin approvals, wizard, doctor.memory, node, tts/talk/voicewake, plus device pairing & in-chat setup. The two introspection tools `openclaw_introspect` (lists every method/event the gateway publishes in its `hello-ok`) and `openclaw_call` (escape hatch for any method) make new gateway endpoints reachable without waiting on a release.
+**0.3.2 / preview.** **134 typed tools wrapping the 128 JSON-RPC methods the gateway publishes** — cron, sessions, agents, channels, chat, logs, models, usage, status/health/heartbeats, config, secrets, skills, exec/plugin approvals, wizard, doctor.memory, node, tts/talk/voicewake, plus device pairing & in-chat setup. The two introspection tools `openclaw_introspect` (lists every method/event the gateway publishes in its `hello-ok`) and `openclaw_call` (escape hatch for any method) make new gateway endpoints reachable without waiting on a release.
 
 WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
@@ -249,9 +249,25 @@ Copy-paste prompts you can drop into Claude after the MCP is paired. Each one ta
 
 ## Resilience
 
-`request()` retries transient errors (network drop, ws close, timeout, DNS) with **exponential backoff**: 1s → 2s → 4s, max 4 attempts. Non-retryable errors (`PAIRING_REQUIRED`, `INVALID`, `MISSING_SCOPE`, etc.) fail fast — no point retrying a permission issue. Set `OPENCLAW_DEBUG=1` to see retry decisions in stderr.
+`request()` retries transient errors (network drop, ws close, timeout, DNS) with **exponential backoff**: defaults to 1s → 2s → 4s, max 4 attempts. Non-retryable errors (`PAIRING_REQUIRED`, `INVALID`, `MISSING_SCOPE`, etc.) fail fast — no point retrying a permission issue. Tune via:
+
+- `OPENCLAW_RETRY_ATTEMPTS` — total attempts (default `4`, range `1`–`10`)
+- `OPENCLAW_RETRY_BASE_MS` — initial backoff in ms (default `1000`, range `100`–`60000`)
+- `OPENCLAW_DEBUG=1` — prints every retry decision to stderr
+
+When a request gives up, the thrown error carries `gateway request '<method>' failed (attempt N/M):` as a prefix and the original error is preserved as `cause` for inspection. `GatewayError` `code` / `details` / `retryable` flags are propagated through the wrap.
 
 The client tracks `lastSuccessAtMs` for `openclaw_health`'s `lastSuccessAgo` field — useful for "is the gateway still talking to me?" debug.
+
+## Diagnostic CLI
+
+For one-shot health checks without wiring the MCP into a client:
+
+```bash
+npx -y openclaw-control-mcp --health
+```
+
+Prints a JSON report (MCP version, gateway URL, paired state, scopes, server version, last-success age, error if any) and exits non-zero on failure. Handy in CI / scripts.
 
 ### Schema looseness
 
