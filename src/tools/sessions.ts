@@ -2,19 +2,31 @@ import { z } from "zod";
 import type { GatewayClient } from "../gateway/client.js";
 import type { ToolDef } from "./cron.js";
 
-const idOnly = z.object({ id: z.string().min(1).describe("Session id") });
+const idOnly = z.object({
+  id: z
+    .string()
+    .min(1)
+    .describe(
+      "Session id. Most session.* methods accept the `sessionId` (UUID); a few accept the composite `key` (e.g. 'agent:main:cron:<id>'). When unsure, try the UUID first; if rejected with NOT_FOUND, retry with the key from openclaw_sessions_list.",
+    ),
+});
 
 export function buildSessionsTools(client: GatewayClient): ToolDef[] {
   const list: ToolDef = {
     name: "openclaw_sessions_list",
     description:
-      "List active OpenClaw agentic sessions. Wraps `sessions.list`. Returns sessions with id, agent, status, last activity. Use to find a session id before patch/abort/compact/reset.",
+      "List active OpenClaw agentic sessions. Wraps `sessions.list`. Each session has both a `sessionId` (UUID) and a `key` (composite, e.g. 'agent:main:main', 'agent:main:cron:<id>', 'agent:main:telegram:group:<chat-id>', 'agent:main:subagent:<uuid>'). Use to find a session before preview/patch/abort/compact/reset.",
     inputSchema: z
       .object({
-        agentId: z.string().optional(),
+        agentId: z.string().optional().describe("Filter by agent id (e.g. 'main')."),
         limit: z.number().int().positive().max(500).optional(),
         offset: z.number().int().min(0).optional(),
-        status: z.string().optional(),
+        status: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by status. Observed values: 'running' (in-flight agent turn), 'done' (completed). May also include 'error' / 'aborted' / 'timeout' depending on gateway version.",
+          ),
       })
       .passthrough(),
     handler: async (args) => client.request("sessions.list", args ?? {}),
@@ -38,11 +50,15 @@ export function buildSessionsTools(client: GatewayClient): ToolDef[] {
   const create: ToolDef = {
     name: "openclaw_sessions_create",
     description:
-      "Create a new agent session. Wraps `sessions.create`. Pass agentId, optional title, optional initial message; consult an existing session via openclaw_sessions_preview to learn the full param shape.",
+      "Create a new agent session. Wraps `sessions.create`. The default agent id is typically 'main'. Pass an optional `title` to set the human-readable label shown in the Control panel.",
     inputSchema: z
       .object({
-        agentId: z.string().min(1).optional(),
-        title: z.string().optional(),
+        agentId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Agent id (e.g. 'main'). Defaults to the gateway's default agent if omitted."),
+        title: z.string().optional().describe("Human-readable title shown in the Control panel."),
       })
       .passthrough(),
     handler: async (args) => client.request("sessions.create", args ?? {}),
@@ -51,7 +67,7 @@ export function buildSessionsTools(client: GatewayClient): ToolDef[] {
   const patch: ToolDef = {
     name: "openclaw_sessions_patch",
     description:
-      "Update session metadata (title, tags, etc.). Wraps `sessions.patch`. Pass id + the fields to update.",
+      "Update session metadata (title, displayName, tags, etc.). Wraps `sessions.patch`. Pass id + only the fields you want to change. Schema is intentionally permissive — gateway accepts any subset of session fields.",
     inputSchema: idOnly.passthrough(),
     handler: async (args) => client.request("sessions.patch", args ?? {}),
   };
@@ -59,12 +75,12 @@ export function buildSessionsTools(client: GatewayClient): ToolDef[] {
   const send: ToolDef = {
     name: "openclaw_sessions_send",
     description:
-      "Send a user message into an existing session. Wraps `sessions.send`. The agent will process and stream the reply via session.message events; use openclaw_sessions_preview afterwards to see the result.",
+      "Send a user message into an existing session. Wraps `sessions.send`. The agent processes async and streams the reply via session.message events; call openclaw_sessions_preview afterwards (with the session's composite key) to see the result. Use either `text` or `message` — gateway accepts both names depending on version.",
     inputSchema: z
       .object({
-        id: z.string().min(1).describe("Session id"),
-        text: z.string().optional(),
-        message: z.string().optional(),
+        id: z.string().min(1).describe("Session id (sessionId UUID)."),
+        text: z.string().optional().describe("Message text. Preferred field name in newer gateway versions."),
+        message: z.string().optional().describe("Message text. Older alias for `text`; pass either, not both."),
       })
       .passthrough(),
     handler: async (args) => client.request("sessions.send", args ?? {}),
@@ -116,8 +132,8 @@ export function buildSessionsTools(client: GatewayClient): ToolDef[] {
       "Fetch a specific compaction snapshot by id. Wraps `sessions.compaction.get`. Read-only.",
     inputSchema: z
       .object({
-        id: z.string().min(1).describe("Compaction snapshot id"),
-        sessionId: z.string().optional(),
+        id: z.string().min(1).describe("Compaction snapshot id (NOT the session id — get this from openclaw_sessions_compaction_list)."),
+        sessionId: z.string().optional().describe("Optional session id, helps disambiguate when the snapshot id is shared across sessions."),
       })
       .passthrough(),
     handler: async (args) => client.request("sessions.compaction.get", args ?? {}),
@@ -126,11 +142,11 @@ export function buildSessionsTools(client: GatewayClient): ToolDef[] {
   const compactionRestore: ToolDef = {
     name: "openclaw_sessions_compaction_restore",
     description:
-      "Restore a session to a previous compaction snapshot. Wraps `sessions.compaction.restore`. Destructive — overwrites current session state.",
+      "Restore a session to a previous compaction snapshot. Wraps `sessions.compaction.restore`. Destructive — overwrites current session state with the snapshot. The current state is lost unless you branched first.",
     inputSchema: z
       .object({
-        id: z.string().min(1).describe("Compaction snapshot id"),
-        sessionId: z.string().optional(),
+        id: z.string().min(1).describe("Compaction snapshot id."),
+        sessionId: z.string().optional().describe("Optional session id; required when the snapshot id is ambiguous."),
       })
       .passthrough(),
     handler: async (args) => client.request("sessions.compaction.restore", args ?? {}),
@@ -139,12 +155,12 @@ export function buildSessionsTools(client: GatewayClient): ToolDef[] {
   const compactionBranch: ToolDef = {
     name: "openclaw_sessions_compaction_branch",
     description:
-      "Branch off a new session from a previous compaction snapshot. Wraps `sessions.compaction.branch`.",
+      "Create a NEW session that starts from a previous compaction snapshot of an existing session. Wraps `sessions.compaction.branch`. Use this when you want to explore an alternative continuation without losing the current session state.",
     inputSchema: z
       .object({
-        id: z.string().min(1).describe("Compaction snapshot id"),
-        sessionId: z.string().optional(),
-        title: z.string().optional(),
+        id: z.string().min(1).describe("Compaction snapshot id to branch from."),
+        sessionId: z.string().optional().describe("Source session id, when the snapshot id is ambiguous."),
+        title: z.string().optional().describe("Title for the new branched session."),
       })
       .passthrough(),
     handler: async (args) => client.request("sessions.compaction.branch", args ?? {}),
