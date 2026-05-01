@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-05-01
+
+### Added
+
+- **`mcpName` field in `package.json`** (`io.github.smurfy92/openclaw-control-mcp`) — required for ownership validation against the official MCP Registry (`registry.modelcontextprotocol.io`).
+- **`server.json`** at repo root — MCP Registry manifest (schema 2025-12-11) pointing at npm package 0.4.2 with stdio transport.
+- **`smithery.yaml`** at repo root — Smithery (smithery.ai) startCommand manifest invoking `npx -y openclaw-control-mcp`.
+
+### Notes
+
+- 0.4.1 was tagged on git but never published to npm. 0.4.2 supersedes it on npm. The 0.4.1 git tag and GitHub Release remain in the history.
+- Both `server.json` and `smithery.yaml` are excluded from the npm tarball via the existing `files` whitelist.
+
 ## [0.4.1] — 2026-05-01
 
 ### Changed
