@@ -6,12 +6,12 @@
     "url": "https://github.com/smurfy92/openclaw-control-mcp",
     "source": "github"
   },
-  "version": "0.4.0",
+  "version": "0.4.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "openclaw-control-mcp",
-      "version": "0.4.0",
+      "version": "0.4.2",
       "transport": {
         "type": "stdio"
       }
