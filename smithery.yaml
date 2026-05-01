@@ -1,0 +1,7 @@
+startCommand:
+  type: stdio
+  commandFunction: |
+    () => ({
+      command: "npx",
+      args: ["-y", "openclaw-control-mcp"],
+    })
