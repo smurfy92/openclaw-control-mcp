@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-05-01
+
+### Added
+
+- **`openclaw_sessions_tail`** — polling tool that watches a session via `sessions.preview` for up to 5 minutes and returns ONLY the messages that arrived during the tail window. Workaround for stdio MCP not being able to stream `sessions.subscribe` / `session.message` events to the client. Stops early on terminal status (`done` / `error` / `aborted` / `timeout` / `completed`) or once `maxMessages` new messages are collected. Defaults: 30s window, 2s poll interval. Concrete user value: "watch this agent reply" workflow.
+
+### Internals
+
+- 84 vitest cases passing (76 → 84, +8 covering the new tail tool: schema bounds, defaults, deduplication, three early-stop conditions).
+- Bundle size 111.79 → 116.57 KB (+4.78 KB for the tail orchestrator + helpers).
+
 ## [0.4.2] — 2026-05-01
 
 ### Added
