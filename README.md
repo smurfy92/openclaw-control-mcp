@@ -200,7 +200,7 @@ Copy-paste prompts you can drop into Claude after the MCP is paired. Each one ta
 → `openclaw_cron_list({ enabled: "all" })`.
 
 ```
-> Show me the last 5 runs of the spartners-veille-prospects cron — compact mode, just the summaries.
+> Show me the last 5 runs of cron job <id> — compact mode, just the summaries.
 ```
 
 → `openclaw_cron_runs({ id: "<job-id>", limit: 5, compact: true })` — summaries truncated to 200 chars, each entry gets a `runAtAgo: "3d ago"` field.
