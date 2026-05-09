@@ -67,7 +67,7 @@ Find it from your browser:
 
 The slickest path — no `~/.claude.json` editing, no env vars. After installing (npx or from source), in chat:
 
-> "Configure OpenClaw with gateway `wss://openclaw-xxx.srv.example.com` and token `<your-token>`"
+> "Configure OpenClaw with gateway `wss://your-gateway.example.com` and token `<your-token>`"
 
 Claude calls `openclaw_setup({ gatewayUrl, gatewayToken })`, the values get persisted to `~/.config/openclaw-control-mcp/store.json` (mode `0600`). The next call to `openclaw_device_status` triggers the WS handshake and pairing flow.
 
@@ -83,7 +83,7 @@ If you prefer env vars (they take precedence over the stored config), edit `~/.c
   "command": "npx",
   "args": ["-y", "openclaw-control-mcp"],
   "env": {
-    "OPENCLAW_GATEWAY_URL": "wss://openclaw-xxx.srv.example.com",
+    "OPENCLAW_GATEWAY_URL": "wss://your-gateway.example.com",
     "OPENCLAW_GATEWAY_TOKEN": "<your-token>",
     "OPENCLAW_TIMEOUT_MS": "30000"
   }

@@ -22,7 +22,7 @@ describe("openclaw_cron_add_weekly", () => {
   it("synthesizes the right cron expression for friday 09:00 Paris", async () => {
     const { tool, calls } = getTool("openclaw_cron_add_weekly");
     await callTool(tool, {
-      name: "monitor",
+      name: "weekly-monitor",
       dayOfWeek: "fri",
       hour: 9,
       message: "weekly digest",
@@ -31,7 +31,7 @@ describe("openclaw_cron_add_weekly", () => {
     expect(calls[0]?.method).toBe("cron.add");
     const job = (calls[0]?.params as { job: Record<string, unknown> }).job;
     expect(job).toMatchObject({
-      name: "monitor",
+      name: "weekly-monitor",
       schedule: { kind: "cron", expr: "0 9 * * 5", tz: "Europe/Paris" },
       payload: { kind: "agentTurn", message: "weekly digest", timeoutSeconds: 900 },
       enabled: true,

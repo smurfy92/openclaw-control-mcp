@@ -18,7 +18,7 @@ describe("cron.add schema (wire format)", () => {
         schedule: { kind: "cron", expr: "0 13 * * 5", tz: "Europe/Paris" },
         payload: {
           kind: "agentTurn",
-          message: "Check the example-project run.",
+          message: "Run the weekly check.",
           timeoutSeconds: 180,
         },
         delivery: { mode: "announce", channel: "telegram", to: "-1001234567890" },

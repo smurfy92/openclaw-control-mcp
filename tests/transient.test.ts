@@ -13,7 +13,7 @@ describe("isTransientError", () => {
     "ws open timeout after 30000ms",
     "gateway closed (1006): abnormal",
     "connect ECONNREFUSED 127.0.0.1:18789",
-    "getaddrinfo ENOTFOUND openclaw-xxx.srv.example.com",
+    "getaddrinfo ENOTFOUND your-gateway.example.com",
     "ETIMEDOUT",
     "EAI_AGAIN openclaw-xxx",
     "socket hang up",

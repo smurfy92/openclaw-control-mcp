@@ -1,20 +1,20 @@
-# Migrating `linkedin-outreach` from `li_at` cookie scraping to Proxycurl
+# Migrating a `linkedin-outreach`-style skill from `li_at` cookie scraping to Proxycurl
 
-**Status:** Ready to deploy. Waiting on Proxycurl credit purchase.
-**Drafted:** 2026-05-09 against gateway 2026.4.12 + skill `linkedin-outreach`.
+**Status:** Reference pattern — adapt to your skill's specifics.
+**Drafted:** 2026-05-09 against gateway 2026.4.12+ + a generic skill that fetches LinkedIn profiles via the `li_at` session cookie.
 
 ## Why
 
-The current skill scrapes LinkedIn via the `li_at` session cookie. The cookie expires unpredictably (anywhere from days to weeks; faster under any of: IP change, OS sleep/wake, manual logout from another device, or LinkedIn's anti-bot heuristics on volume). Each expiration breaks the bot silently — User sends a request, the agent grinds for 20+ minutes, fails, and the user only notices when nothing comes back.
+A skill that scrapes LinkedIn via the `li_at` session cookie has a structural reliability problem: the cookie expires unpredictably (anywhere from days to weeks; faster under any of: IP change, OS sleep/wake, manual logout from another device, or LinkedIn's anti-bot heuristics on volume). Each expiration breaks the bot silently — a user sends a request, the agent grinds for 20+ minutes, fails, and no one notices until output stops appearing.
 
-Proxycurl wraps the LinkedIn data layer in a maintained REST API (`https://nubela.co/proxycurl/api/v2/linkedin?url=…`). Cookie management, IP rotation, captcha handling are theirs. Cost: ~$0.01-0.05/profile, ~$50-100/month at User's volume.
+Proxycurl wraps the LinkedIn data layer in a maintained REST API (`https://nubela.co/proxycurl/api/v2/linkedin?url=…`). Cookie management, IP rotation, captcha handling are theirs. Cost: ~$0.01-0.05/profile. At a few hundred profiles per month the bill is in the low double digits; at thousands it scales into low hundreds.
 
 ## Architecture cible
 
 ```
                        ┌─────────────────┐
-                       │  Discord user   │
-                       │  (User)       │
+                       │   Discord /     │
+                       │   Telegram user │
                        └────────┬────────┘
                                 ▼
                   ┌──────────────────────────────┐
@@ -39,7 +39,7 @@ Proxycurl wraps the LinkedIn data layer in a maintained REST API (`https://nubel
                   └──────────────────────────────┘
 ```
 
-The skill becomes **dual-source**: try Proxycurl first; on missing key or upstream failure, fall back to the cookie path. This lets us:
+The skill becomes **dual-source**: try Proxycurl first; on missing key or upstream failure, fall back to the cookie path. This lets you:
 
 - Deploy the migration **before** purchasing Proxycurl credits — the bot keeps working on cookies until the key is set.
 - Roll back instantly: clear `tools.linkedin-outreach.proxycurlApiKey` from config and the skill auto-reverts.
@@ -47,7 +47,7 @@ The skill becomes **dual-source**: try Proxycurl first; on missing key or upstre
 
 ## Storing the API key (post-MCP 0.5.x)
 
-Use the new `openclaw_secrets_set` tool. From Claude Code chat:
+Use the `openclaw_secrets_set` tool:
 
 ```jsonc
 {
@@ -85,7 +85,7 @@ To revert (e.g. when credits run out):
 
 The skill detects the absent key on next run and falls back to the cookie path automatically.
 
-## Skill changes (gateway-side, in `/data/.openclaw/agents/main/skills/linkedin-outreach/`)
+## Skill changes (gateway-side, in `/data/.openclaw/agents/<your-agent>/skills/linkedin-outreach/`)
 
 The skill is a markdown file with embedded tool calls. Replace the cookie-fetch tool call with a Proxycurl-first dispatcher:
 
@@ -185,9 +185,9 @@ After cutover, add a daily check:
     "name": "proxycurl-credit-watch",
     "hour": 9,
     "tz": "Europe/Paris",
-    "message": "Check Proxycurl credit balance and send a Discord summary to #reports if < 200 credits remaining.",
+    "message": "Check Proxycurl credit balance and send a Discord summary to your monitoring channel if < 200 credits remaining.",
     "channel": "discord",
-    "to": "<channel-id-redacted>",
+    "to": "<your-channel-id>",
     "deliveryMode": "announce",
     "timeoutSeconds": 60
   }
@@ -198,7 +198,7 @@ The skill checks `https://nubela.co/proxycurl/api/credit-balance` (free) and ann
 
 ## Rollout plan
 
-1. **Now (no credits)** — Deploy the dispatcher version of `linkedin-outreach`. Without the API key configured, it falls back to cookie scraping every call (zero behaviour change for users).
+1. **Pre-credits** — Deploy the dispatcher version of `linkedin-outreach`. Without the API key configured, it falls back to cookie scraping every call (zero behaviour change for users).
 2. **Day of credit purchase** — `openclaw_secrets_set({ name: "proxycurlApiKey", value: "...", scope: "tools.linkedin-outreach" })`. From the next agent run on, Proxycurl is primary.
 3. **Validation week** — monitor session previews for `Source: proxycurl` vs `Source: LinkedIn-cookie` ratio. Should be ~100% Proxycurl. Spot-check 5 profiles to compare outputs.
 4. **Steady state** — `proxycurl-credit-watch` cron runs daily. If credits run out, manual `config.patch` removes the key, fallback resumes automatically.
@@ -215,5 +215,5 @@ The skill checks `https://nubela.co/proxycurl/api/credit-balance` (free) and ann
 ## Out of scope (for a later iteration)
 
 - **Proxycurl sub-features** (company profile, posts deep-dive, contact search) — can be added incrementally once the core profile fetch is stable.
-- **Multi-tenant Proxycurl billing** if multiple OpenClaw users share this key — Proxycurl supports sub-accounts but this isn't a concern for a single-tenant Example Org deploy.
+- **Multi-tenant Proxycurl billing** if multiple OpenClaw users share this key — Proxycurl supports sub-accounts; not relevant for a single-tenant deploy.
 - **Cookie auto-refresh daemon** — only useful if you go back to cookie-only. Not deploying alongside Proxycurl since they solve overlapping problems.

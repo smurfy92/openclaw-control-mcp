@@ -82,8 +82,8 @@ export class MockGateway {
   private pluginApprovals: Array<Record<string, unknown>> = [];
 
   private skills: Array<Record<string, unknown>> = [
-    { id: "linkedin-outreach", name: "LinkedIn Outreach", installed: true, version: "0.3.0" },
-    { id: "sample-report", name: "Monthly Token Report", installed: true, version: "0.1.0" },
+    { id: "sample-skill", name: "Sample Skill", installed: true, version: "0.1.0" },
+    { id: "another-sample", name: "Another Sample", installed: true, version: "0.2.0" },
   ];
 
   private nodes: Array<Record<string, unknown>> = [

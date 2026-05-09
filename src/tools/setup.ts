@@ -19,7 +19,7 @@ export function buildSetupTools(store: Store, hooks: SetupHooks): ToolDef[] {
       gatewayUrl: z
         .string()
         .min(1)
-        .describe("WebSocket URL of the gateway, e.g. wss://openclaw-xxx.srv.example.com or ws://127.0.0.1:18789"),
+        .describe("WebSocket URL of the gateway, e.g. wss://your-gateway.example.com or ws://127.0.0.1:18789"),
       gatewayToken: z
         .string()
         .min(1)

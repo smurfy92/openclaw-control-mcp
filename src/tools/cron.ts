@@ -119,7 +119,7 @@ export function buildCronTools(client: ToolClient): ToolDef[] {
           payload: z
             .object({
               kind: z.enum(["agentTurn", "systemEvent"]),
-              // agentTurn shape (matches sample-report, weekly-monitor, etc.)
+              // agentTurn shape — sends `message` to the named agent at fire time.
               message: z.string().optional().describe("The text the agent receives at fire time. Used with kind='agentTurn'."),
               timeoutSeconds: z.number().int().positive().optional().describe("Hard cap for the agent run. Default agentic monitors should use ≥120s (cold-start ~10-15s)."),
               model: z.string().optional().describe("Override the default model for this job, e.g. 'claude-sonnet-4-6'."),

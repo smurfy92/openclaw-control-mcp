@@ -260,11 +260,11 @@ describe("MockGateway — channels + skills + tools.catalog", () => {
 
   it("skills.search filters by query substring", () => {
     const g = new MockGateway();
-    const r = g.request("skills.search", { query: "linkedin" }) as {
+    const r = g.request("skills.search", { query: "sample" }) as {
       results: Array<{ id: string }>;
     };
     expect(r.results.length).toBeGreaterThan(0);
-    expect(r.results.every((s) => s.id.includes("linkedin"))).toBe(true);
+    expect(r.results.every((s) => s.id.includes("sample"))).toBe(true);
   });
 
   it("tools.catalog returns a non-empty list", () => {
