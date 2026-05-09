@@ -23,11 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `openclaw_chat_abort` now requires `sessionKey`. The pre-0.5.x `agentId/sessionId` fields are rejected.
 - **`openclaw_talk_mode` requires `enabled: boolean`** (verified live: it's a SETTER, not a getter as the description implied). Use `openclaw_talk_config` for read access.
 
+### Changed
+
+- **MockGateway expanded from ~20 to ~80 methods** with realistic state transitions. Workflow chains now work end-to-end in mock mode: `sessions.create → chat.send → chat.history` (sees the user message AND an auto-generated assistant reply); `agents.create → agents.list` (persisted); `exec.approval.request → list → resolve` (status flips correctly); `cron.add → list → run → runs` (full lifecycle). Mock now mirrors the live wire-format requirements (e.g. `chat.send` rejects missing `idempotencyKey`, `secrets.resolve` requires `commandName`, `wizard.status` requires `sessionId`) so end-to-end tests catch the same drifts the live probe does. Unrecognised methods still return the generic `{ mock: true, ok: true, note: "extend src/gateway/mock.ts" }` stub.
+- **`logs.tail` mock returns `lines: string[]`** (matches the real wire format the wrapper expects). Pre-fix the mock returned `entries: [...]` which the wrapper would silently see as empty. Bug latent since 0.5.0.
+
 ### Internals
 
 - New `scripts/probe-secrets.ts`, `scripts/probe-agent-method.ts`, `scripts/probe-chat-history.ts`, `scripts/probe-chat-and-voice.ts` — standalone live probes used to discover the schema drifts above. Kept under `scripts/` for future audits.
-- 16 new vitest cases (172 total, was 156): architectural invariants (5), chat.* schema tightening (5), talk.mode schema (1), agent/send auto-idempotency (2), wizard.status (1), instance arg forwarding (1), tool count sanity (1).
+- 35 new vitest cases (191 total, was 156): architectural invariants (5), chat.* schema tightening (5), talk.mode schema (1), agent/send auto-idempotency (2), wizard.status (1), instance arg forwarding (1), tool count sanity (1), MockGateway workflow chains (19).
 - `openclaw_device_repair` schema wrapped in `withInstance` (caught by the new architectural test on first run — the test paid for itself before the commit even landed).
+- `MockGateway` refactored from one big switch to a route-table dispatcher with handler methods grouped by domain (~590 lines, +400 vs pre-fix). Each domain (chat, sessions, agents, channels, exec.approval, …) is a focused block.
 
 ## [0.5.1] — 2026-05-09
 
