@@ -111,8 +111,8 @@ export function buildDeviceTools(client: ToolClient, store: Store): ToolDef[] {
   const deviceRepair: ToolDef = {
     name: "openclaw_device_repair",
     description:
-      "Recover from the `expected Uint8Array of length 32, got length=0` failure mode (empty `device.privateKey`). Backs up `store.json` to `store.json.bak.<ts>`, wipes the broken device + cached tokens (keeps gateway URL + token configs), and drops the matching keychain entries. The next call to any scoped tool regenerates a fresh Ed25519 keypair and surfaces a new `pendingPairing.requestId` to approve in the Control panel. **Destructive — run only when openclaw_device_status reports the empty-private-key failure mode.**",
-    inputSchema: z.object({}),
+      "Recover from the `expected Uint8Array of length 32, got length=0` failure mode (empty `device.privateKey`). Backs up `store.json` to `store.json.bak.<ts>`, wipes the broken device + cached tokens (keeps gateway URL + token configs), and drops the matching keychain entries. The next call to any scoped tool regenerates a fresh Ed25519 keypair and surfaces a new `pendingPairing.requestId` to approve in the Control panel. The `instance` arg is accepted but currently no-op — the local Store is shared across all instances. **Destructive — run only when openclaw_device_status reports the empty-private-key failure mode.**",
+    inputSchema: withInstance(z.object({})),
     handler: async () => {
       const integrity = await store.deviceIntegrity();
       const result = await store.repairDevice();

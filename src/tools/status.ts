@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { formatAgo } from "../format.js";
 import { getMcpVersion } from "../version.js";
@@ -105,23 +106,39 @@ export function buildStatusTools(client: ToolClient): ToolDef[] {
   const send: ToolDef = {
     name: "openclaw_send",
     description:
-      "Generic root-level `send` — pushes a message into an agent / session via the gateway's default routing. Prefer the typed `openclaw_chat_send` or `openclaw_sessions_send` when possible.",
+      "Channel-routed `send` — pushes a message via the gateway's delivery layer. Wire format (verified live against gateway 2026.4.12+): requires `to` (channel-specific recipient) + `idempotencyKey` (auto-generated if omitted). Prefer the typed `openclaw_chat_send` or `openclaw_sessions_send` when you want session context.",
     inputSchema: withInstance(z
       .object({
-        agentId: z.string().optional(),
-        sessionId: z.string().optional(),
-        text: z.string().optional(),
+        to: z.string().min(1).describe("Channel-specific recipient (e.g. Telegram chat id, Discord channel id, email address)."),
+        idempotencyKey: z.string().optional().describe("Unique key to dedupe retries. Auto-generated UUID if omitted."),
       })
       .passthrough()),
-    handler: passthroughHandler(client, "send"),
+    handler: async (args) => {
+      const { rest, opts } = splitInstance(args);
+      const a = rest as { to: string; idempotencyKey?: string; [k: string]: unknown };
+      const params = { ...a, idempotencyKey: a.idempotencyKey ?? randomUUID() };
+      return client.request("send", params, opts);
+    },
   };
 
   const agent: ToolDef = {
     name: "openclaw_agent",
     description:
-      "Root-level `agent` method — gateway-specific shape (often returns the active/default agent context). Read-only in practice; consult openclaw_introspect output if the response is unexpected.",
-    inputSchema: withInstance(z.object({}).passthrough()),
-    handler: passthroughHandler(client, "agent"),
+      "Root-level `agent` method — sends a message to the default agent and returns the agent's response. Wire format (verified live against gateway 2026.4.12+): requires `message` + `idempotencyKey` (auto-generated if omitted). NOT read-only — this triggers an agent turn. Prefer `openclaw_sessions_send` when you want explicit session control.",
+    inputSchema: withInstance(z
+      .object({
+        message: z.string().min(1).describe("Message to send to the agent."),
+        agentId: z.string().optional().describe("Override the default agent."),
+        sessionId: z.string().optional().describe("Target a specific session; omit to use the default."),
+        idempotencyKey: z.string().optional().describe("Unique key to dedupe retries. Auto-generated UUID if omitted."),
+      })
+      .passthrough()),
+    handler: async (args) => {
+      const { rest, opts } = splitInstance(args);
+      const a = rest as { message: string; idempotencyKey?: string; [k: string]: unknown };
+      const params = { ...a, idempotencyKey: a.idempotencyKey ?? randomUUID() };
+      return client.request("agent", params, opts);
+    },
   };
 
   const agentIdentityGet: ToolDef = {

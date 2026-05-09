@@ -35,8 +35,12 @@ export function buildWizardTools(client: ToolClient): ToolDef[] {
   const status: ToolDef = {
     name: "openclaw_wizard_status",
     description:
-      "Get the active wizard's current step and pending input. Wraps `wizard.status`. Read-only.",
-    inputSchema: withInstance(z.object({}).passthrough()),
+      "Get the wizard's current step and pending input for a specific session. Wraps `wizard.status`. Wire format (verified live against gateway 2026.4.12+): requires `sessionId`. Read-only.",
+    inputSchema: withInstance(z
+      .object({
+        sessionId: z.string().min(1).describe("Session id whose wizard state to inspect."),
+      })
+      .passthrough()),
     handler: passthroughHandler(client, "wizard.status"),
   };
 

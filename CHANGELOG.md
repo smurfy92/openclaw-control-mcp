@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Architectural smoke test** (`tests/architectural.test.ts`) — vitest assertion that every registered tool wraps its input schema in `withInstance`, follows the `openclaw_*` naming convention, has no name collisions, has a non-empty description, and exports an async handler. Caught `openclaw_device_repair` missing `withInstance` on first run; that's the bug class it'll prevent in the future.
+- **`scripts/verify-all-tools.ts`** + `npm run verify:live` — pre-release regression guard. Boots the configured gateway client, round-trips ~33 read-only probes through the typed wrappers, and emits a JSON / human-readable report classifying outcomes as `ok` / `wrapper-zod-error` / `gateway-invalid-request` (= drift) / `gateway-other-error`. Exits non-zero on drift so CI can gate on it. CLI flags: `--json`, `--out report.json`, `--include foo,bar`, `--exclude doctor`. SEND-style tools (agent, send, chat.send, sessions.send) are excluded — probing them would trigger real agent turns / channel deliveries.
+
+### Fixed
+
+- **`openclaw_wizard_status` requires `sessionId`** (verified live against gateway 2026.4.12+). Wrapper had `z.object({}).passthrough()` and the gateway always rejected. Now requires the field.
+- **`openclaw_agent` is NOT read-only** despite the previous description claiming so (verified live: gateway requires `message` + `idempotencyKey`). Renamed semantics: it's a SEND that triggers an agent turn. Wrapper now requires `message`, auto-generates `idempotencyKey` from `crypto.randomUUID()` when omitted. Description updated to reflect side-effects.
+- **`openclaw_send` requires `to` + `idempotencyKey`** (verified live: gateway's root `send` is channel-routed delivery). Wrapper had soft `agentId/sessionId/text` shape with everything optional; the `text` field is rejected as `unexpected property`. Schema tightened to require `to` and auto-generate `idempotencyKey`.
+
+### Internals
+
+- New `scripts/probe-secrets.ts` and `scripts/probe-agent-method.ts` — standalone live probes used to discover the schema drifts above. Kept under `scripts/` for future audits.
+- 7 new vitest cases (163 total, was 156): architectural invariants (5), instance arg forwarding (1), tool count sanity (1).
+- `openclaw_device_repair` schema wrapped in `withInstance` (caught by the new architectural test on first run — the test paid for itself before the commit even landed).
+
 ## [0.5.1] — 2026-05-09
 
 ### Fixed (reliability)
