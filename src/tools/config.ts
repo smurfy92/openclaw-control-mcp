@@ -1,20 +1,7 @@
 import { z } from "zod";
 import { passthroughHandler, splitInstance, withInstance, type ToolClient } from "./client.js";
 import type { ToolDef } from "./cron.js";
-
-function projectByPath(value: unknown, path?: string): unknown {
-  if (!path) return value;
-  const segments = path.split(".").filter(Boolean);
-  let cursor: unknown = value;
-  for (const seg of segments) {
-    if (cursor && typeof cursor === "object" && !Array.isArray(cursor)) {
-      cursor = (cursor as Record<string, unknown>)[seg];
-    } else {
-      return undefined;
-    }
-  }
-  return cursor;
-}
+import { mergeAt, projectByPath } from "./_merge.js";
 
 export function buildConfigTools(client: ToolClient): ToolDef[] {
   const get: ToolDef = {
@@ -120,57 +107,4 @@ export function buildConfigTools(client: ToolClient): ToolDef[] {
   };
 
   return [get, set, patch, apply, schema, schemaLookup];
-}
-
-function mergeAt(
-  root: Record<string, unknown>,
-  path: string,
-  value: unknown,
-): Record<string, unknown> {
-  const segments = path.split(".").filter(Boolean);
-  if (segments.length === 0) {
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      return deepMerge(root, value as Record<string, unknown>);
-    }
-    throw new Error("config.patch mergePath empty — pass an object as mergeValue or use a path.");
-  }
-  let cursor: Record<string, unknown> = root;
-  for (let i = 0; i < segments.length - 1; i++) {
-    const seg = segments[i] as string;
-    const next = cursor[seg];
-    if (!next || typeof next !== "object" || Array.isArray(next)) {
-      cursor[seg] = {};
-    }
-    cursor = cursor[seg] as Record<string, unknown>;
-  }
-  const last = segments[segments.length - 1] as string;
-  const existing = cursor[last];
-  if (
-    existing && typeof existing === "object" && !Array.isArray(existing) &&
-    value && typeof value === "object" && !Array.isArray(value)
-  ) {
-    cursor[last] = deepMerge(existing as Record<string, unknown>, value as Record<string, unknown>);
-  } else {
-    cursor[last] = value;
-  }
-  return root;
-}
-
-function deepMerge(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-): Record<string, unknown> {
-  const out = { ...a };
-  for (const [k, v] of Object.entries(b)) {
-    const cur = out[k];
-    if (
-      cur && typeof cur === "object" && !Array.isArray(cur) &&
-      v && typeof v === "object" && !Array.isArray(v)
-    ) {
-      out[k] = deepMerge(cur as Record<string, unknown>, v as Record<string, unknown>);
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
 }
