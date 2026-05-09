@@ -7,30 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-05-09
+
+### Fixed (reliability)
+
+- **Stale WS — `device nonce mismatch` now auto-recovers.** `isTransientError` matches `/nonce mismatch|stale[_\s-]?nonce/i` on `GatewayError`, so the existing retry loop (which already drops cached client + nonce between attempts) triggers a fresh handshake on the next attempt. When the retry budget is exhausted (4 attempts), the wrapped error message includes an actionable hint pointing at `openclaw_setup` and the troubleshooting doc. Resolves bug documented in [`docs/troubleshooting/stale-connection-nonce-mismatch.md`](./docs/troubleshooting/stale-connection-nonce-mismatch.md) — was the most painful UX issue in 0.5.0 (user had to re-run `openclaw_setup` after every idle period).
+- **Empty `device.privateKey` — three-layer fix.** (1) `Store.stripSecretsToKeychain` no longer blanks `privateKey` when the keychain `set` call throws — the secret stays in the on-disk JSON (mode 0600) instead of being lost. Same for tokens, gatewayToken, gatewayPassword. (2) `signConnect` now pre-checks key length and throws a typed `DevicePrivateKeyMissingError` with actionable steps instead of the cryptic `expected Uint8Array of length 32, got length=0` from noble. (3) New tool **`openclaw_device_repair`** backs up `store.json` to `store.json.bak.<ts>`, wipes the broken device + cached tokens, drops matching keychain entries, and surfaces a clear next-step. Configs (gatewayUrl, gatewayToken) are preserved. Resolves bug from [`docs/troubleshooting/empty-private-key.md`](./docs/troubleshooting/empty-private-key.md).
+
 ### Added
 
-- **4 cron template tools** that synthesize the `cron.add` wire format so callers don't have to remember `schedule.kind` / cron expressions. New tools:
-  - `openclaw_cron_add_weekly` — `(name, dayOfWeek, hour, minute, tz, message, channel?, to?)` → `0 H * * D` cron expression
-  - `openclaw_cron_add_daily` — `(name, hour, minute, tz, message, …)` → `0 H * * *`
-  - `openclaw_cron_add_every` — `(name, intervalMinutes | intervalHours, message, …)` → `kind: "every"`, `everyMs` computed
-  - `openclaw_cron_add_once` — `(name, at, message, …)` → `kind: "exact"` + `deleteAfterRun: true`. Auto-validates RFC3339.
-  All four accept the standard `agentId` / `model` / `timeoutSeconds` / `channel` / `to` / `deliveryMode` knobs and the per-call `instance` param.
-- **Mock mode** (`OPENCLAW_MOCK=1` or `--mock`). Swaps the WebSocket client for an in-memory `MockGateway` with canned responses for the most-used JSON-RPC methods (cron.{list,add,update,remove,run,runs}, sessions.{list,preview,create}, config.{get,patch}, status, health, gateway.identity.get, agents.list, models.list, secrets.reload, logs.tail). Lets callers exercise the full MCP surface without provisioning a real gateway — handy for CI, demos, and dry-runs before touching prod. Un-canned methods return `{ mock: true, ok: true, note: "extend src/gateway/mock.ts to specialise" }` so nothing crashes.
-- **`tests/helpers/mock-client.ts`** — shared `makeMockClient()` helper (replaces the duplicated stub patterns in per-call-instance / wrapper-fixes / cron-templates tests). Exposes `setNextResponse` and `setRequestHandler` for stateful mocks.
-
-### Fixed
-
-- **`openclaw_sessions_list` `status` filter is now applied client-side.** The gateway rejects `status` with `INVALID_REQUEST: unexpected property 'status'` (verified live against 2026.4.12+). The wrapper now forwards only `agentId` / `limit` / `offset` to the gateway and filters the returned `sessions[]` array by `status` after fetch. Surfaces a `statusFilter` field in the response for transparency. No change for callers that don't pass `status`.
-- **`openclaw_logs_tail` `sinceMs` / `level` / `component` filters now applied client-side.** The gateway rejects all three with `INVALID_REQUEST: unexpected property 'X'` (verified live against 2026.4.12+). Only `limit` reaches the wire. The handler parses each line's `_meta.date` / `_meta.logLevelName` / message text and filters in-process. Surfaces a `clientFilter` field with `{ sinceMs, level, component, kept, dropped }` so callers can see what was filtered. Use a higher `limit` when filtering aggressively to avoid empty responses.
-- **Stale WS — `device nonce mismatch` now auto-recovers.** `isTransientError` matches `/nonce mismatch|stale[_\s-]?nonce/i` on `GatewayError`, so the existing retry loop (which already drops cached client + nonce between attempts) triggers a fresh handshake on the next attempt. When the retry budget is exhausted (4 attempts), the wrapped error message includes an actionable hint pointing at `openclaw_setup` and the troubleshooting doc. Resolves bug from `docs/troubleshooting/stale-connection-nonce-mismatch.md`.
-- **Empty `device.privateKey` — three-layer fix.** (1) `Store.stripSecretsToKeychain` no longer blanks `privateKey` when the keychain `set` call throws — the secret stays in the on-disk JSON (mode 0600) instead of being lost. Same for tokens, gatewayToken, gatewayPassword. (2) `signConnect` now pre-checks key length and throws a typed `DevicePrivateKeyMissingError` with actionable steps instead of the cryptic `expected Uint8Array of length 32, got length=0` from noble. (3) New tool **`openclaw_device_repair`** backs up `store.json` to `store.json.bak.<ts>`, wipes the broken device + cached tokens, drops matching keychain entries, and surfaces a clear next-step. Configs (gatewayUrl, gatewayToken) are preserved. Resolves bug from `docs/troubleshooting/empty-private-key.md`.
-
-### Added (since 0.5.0)
-
-- **`openclaw_device_repair`** tool — single-purpose recovery from the empty-private-key inconsistency.
+- **`openclaw_device_repair`** tool — single-purpose recovery from the empty-private-key inconsistency. Destructive (wipes device + tokens) but non-destructive on gateway configs. Run only when `openclaw_device_status` reports the failure mode.
 - **`Store.deviceIntegrity()`** + **`Store.repairDevice()`** — public Store API for callers that need to inspect or reset device state programmatically.
 - **`DevicePrivateKeyMissingError`** class exported from `gateway/device.ts`.
 - **`isStaleNonceError`** helper exported from `gateway/client.ts`.
+- **4 ADRs** in `docs/adr/` formalizing the load-bearing architectural decisions (Store, ToolClient, shim, introspect-and-call). Each anchored in source via `// ADR-NNN` comment. Surfaced after `codegraph-toolkit` flagged these files as articulation points without documented rationale.
 
 ### Removed
 
@@ -38,8 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internals
 
-- Bundle 125.67 → 141.66 KB (+16 KB for the 4 cron templates + MockGateway + client-side filter logic).
-- 25 new vitest cases (131 total): 9 cron templates + 8 MockGateway + 8 schema-drift fixes (sessions.list status filter wire-format / behaviour / pass-through, logs.tail sinceMs/level/component filters / pass-through).
+- Cleanup from codegraph audit (one-shot) — 8 `export` removed on local-only types (`GatewayClientOptions`, `SignConnectInput`, `GatewayConfigShape`, `StoreShape`, `LastHello`, `SetupHooks`, `MockCall`, `MockClientHandle`); `Store.hydrateSecretsFromKeychain` refactored to drop nesting from 5 to 3 levels via `readWithLegacyFallback` helper; `err.retryable === true` → `err.retryable` in `isTransientError`.
+- 19 new vitest cases (150 total, was 131): 4 stale-nonce handling, 5 privateKey integrity / repair / signConnect assertion, 8 sessions.list & logs.tail filter pass-through (already in 0.5.0 but tests added retroactively), 2 misc.
+- Bundle 141.66 → 146.45 KB (+5 KB for the reliability fixes + repair tool).
 
 ## [0.5.0] — 2026-05-07
 
@@ -47,7 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Per-call `instance` parameter on every tool.** Each of the ~134 tools now accepts an optional `instance` field (e.g. `{ instance: "work" }`) so a single MCP can target a different gateway per call without flipping the active default first. Useful for cron jobs that fan out across multiple gateways from one Claude Code session.
 - **HTTP transport** (Streamable HTTP, MCP spec 2024-11-05+). Run with `--http` (or `OPENCLAW_HTTP=1`) to expose the MCP at `http://127.0.0.1:3333/mcp` instead of stdio. Configure with `--http-port=N` / `--http-host=H` or `OPENCLAW_HTTP_PORT` / `OPENCLAW_HTTP_HOST`. Stateful mode (per-client session id) so concurrent clients don't clobber each other. Unblocks Cursor / Continue / Cline / Zed wiring.
+- **4 cron template tools** that synthesize the `cron.add` wire format so callers don't have to remember `schedule.kind` / cron expressions:
+  - `openclaw_cron_add_weekly` — `(name, dayOfWeek, hour, minute, tz, message, channel?, to?)` → `0 H * * D` cron expression
+  - `openclaw_cron_add_daily` — `(name, hour, minute, tz, message, …)` → `0 H * * *`
+  - `openclaw_cron_add_every` — `(name, intervalMinutes | intervalHours, message, …)` → `kind: "every"`, `everyMs` computed
+  - `openclaw_cron_add_once` — `(name, at, message, …)` → `kind: "exact"` + `deleteAfterRun: true`. Auto-validates RFC3339.
+  All four accept the standard `agentId` / `model` / `timeoutSeconds` / `channel` / `to` / `deliveryMode` knobs and the per-call `instance` param.
+- **Mock mode** (`OPENCLAW_MOCK=1` or `--mock`). Swaps the WebSocket client for an in-memory `MockGateway` with canned responses for the most-used JSON-RPC methods (cron.{list,add,update,remove,run,runs}, sessions.{list,preview,create}, config.{get,patch}, status, health, gateway.identity.get, agents.list, models.list, secrets.reload, logs.tail). Lets callers exercise the full MCP surface without provisioning a real gateway — handy for CI, demos, and dry-runs before touching prod. Un-canned methods return `{ mock: true, ok: true, note: "extend src/gateway/mock.ts to specialise" }` so nothing crashes.
 - **`config.patch` convenience flow.** Pass `{ mergePath, mergeValue }` and the wrapper auto-fetches `config.get`, deep-merges your value at the dotted path, computes the resulting `raw` JSON, and submits with the freshly-read `baseHash`. The advanced `{ raw, baseHash }` shape is still available for callers that need full control over the optimistic-locking flow.
+- **`tests/helpers/mock-client.ts`** — shared `makeMockClient()` helper (replaces the duplicated stub patterns in per-call-instance / wrapper-fixes / cron-templates tests). Exposes `setNextResponse` and `setRequestHandler` for stateful mocks.
 
 ### Changed
 
@@ -60,25 +59,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`openclaw_cron_update` aligned with the gateway's wire format.** Old shape `{ job: { id, ...fields } }` is auto-translated into the new `{ id|jobId, patch }` shape (verified live: gateway anyOf accepts both `id` and `jobId`). Pre-0.5.0 callers keep working without changes; new callers can pass `{ id, patch: {...} }` directly. Wrapper-level error if neither id nor jobId is provided, with an actionable message.
 - **`openclaw_config_get` `path` filter now does client-side projection.** The gateway never accepted a `path` param (rejected with `unexpected property 'path'`). The wrapper now fetches the full config and applies the dotted path projection against the parsed tree, returning `{ ...originalResponse, projectedPath, projected }`. No change for callers that don't pass `path`.
 - **`openclaw_config_patch` aligned with the gateway's optimistic-locked wire format `{ raw: string, baseHash: string }`** (raw is the *full* config serialized as JSON, baseHash from a previous `config.get`). The pre-0.5.0 `{ path, value }` shape was rejected by the gateway and is now rejected at the wrapper with a message pointing to the new shapes.
+- **`openclaw_sessions_list` `status` filter now applied client-side.** The gateway rejects `status` with `INVALID_REQUEST: unexpected property 'status'`. The wrapper now forwards only `agentId` / `limit` / `offset` to the gateway and filters the returned `sessions[]` array by `status` after fetch. Surfaces a `statusFilter` field in the response for transparency.
+- **`openclaw_logs_tail` `sinceMs` / `level` / `component` filters now applied client-side.** The gateway rejects all three with `INVALID_REQUEST: unexpected property 'X'`. Only `limit` reaches the wire. Each line's `_meta.date` / `_meta.logLevelName` / message text is parsed and filtered in-process. Surfaces a `clientFilter` field with `{ sinceMs, level, component, kept, dropped }`.
 
 ### Internals
 
 - New `src/tools/client.ts`: `ToolClient` interface, `withInstance` Zod helper, `splitInstance`, `passthroughHandler`. The 25 tool files refactored mechanically via these helpers.
-- 21 new vitest cases (106 total, was 85 in 0.4.3): 9 for per-call instance routing, 12 for the wrapper-format fixes (openclaw_call params guardrail, cron.update legacy translation, config.get client-side projection, config.patch convenience flow).
-- New `scripts/repro-bugs.ts` and `scripts/verify-fixes.ts` — standalone live-gateway probes used to validate the schema fixes, kept under `scripts/` (not in the npm tarball).
-- Bundle size 116.57 → 125.67 KB (+9 KB for HTTP transport + per-call routing helpers + config.patch deep-merge convenience).
-
-### Known issues
-
-- **Stale WS connection — `device nonce mismatch` after idle period.** Once the gateway connection has gone stale (server-side timeout / sleep-wake / network blip), every subsequent JSON-RPC call returns `gateway request 'X' failed: device nonce mismatch`, the in-process retry loop does not recover, and the user has to re-run `openclaw_setup` with the same params to force a fresh handshake. Reported 2026-05-05. Workaround + proposed fixes in [`docs/troubleshooting/stale-connection-nonce-mismatch.md`](./docs/troubleshooting/stale-connection-nonce-mismatch.md). Fix candidates:
-  1. Treat `device nonce mismatch` as a transient error AND drop the cached client / re-handshake before retrying (`client.ts:isTransientError` + `request` paths).
-  2. Periodic `health` ping on idle WS to detect dead connections proactively.
-  3. Replace the raw error propagation with an actionable message pointing at `openclaw_setup`.
-- **Empty `device.privateKey` after pairing leaves the MCP unrecoverably stuck** with `gateway request '…' failed: expected Uint8Array of length 32, got length=0`. Reported 2026-05-05 against 0.4.3 + gateway 2026.4.12. Root cause: `Store.stripSecretsToKeychain` blanks `privateKey` in `store.json` even when the keychain backend silently failed to persist it (NoopBackend, OS keychain reset, or out-of-band mutation). Workaround and proposed fixes documented in [`docs/troubleshooting/empty-private-key.md`](./docs/troubleshooting/empty-private-key.md). Fix candidates (ordered by impact):
-  1. Conditionally blank `privateKey` only when the keychain `set` actually succeeded (`store.ts:150-177`).
-  2. Self-heal at load when `publicKey` exists but `privateKey` is missing from both store and keychain — either auto-regenerate or hard-fail with an actionable error.
-  3. Add a pre-sign length assertion in `device.ts:signConnect` so the noble error is replaced by a message pointing at the troubleshooting doc.
-  4. Ship an `openclaw_device_repair` tool that wipes the broken device + cached tokens and re-runs the handshake.
+- New `src/gateway/mock.ts`: in-memory `MockGateway` for the new mock mode.
+- New `src/tools/cronTemplates.ts`: 4 new cron template tools.
+- 46 new vitest cases (131 total, was 85 in 0.4.3): 9 per-call instance routing, 12 wrapper-format fixes, 9 cron templates, 8 MockGateway, 8 schema-drift filters.
+- New `scripts/repro-bugs.ts`, `scripts/verify-fixes.ts`, `scripts/verify-fixes-2.ts` — standalone live-gateway probes used to validate the schema fixes. Kept under `scripts/` (not in the npm tarball).
+- Bundle size 116.57 → 141.66 KB (+25 KB for HTTP transport, mock mode, cron templates, per-call routing helpers, client-side filter logic).
 
 ## [0.4.3] — 2026-05-01
 
