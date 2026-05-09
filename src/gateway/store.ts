@@ -12,7 +12,7 @@ export type DeviceTokenEntry = {
   savedAtMs: number;
 };
 
-export type GatewayConfigShape = {
+type GatewayConfigShape = {
   gatewayUrl?: string;
   gatewayToken?: string;
   gatewayPassword?: string;
@@ -21,7 +21,7 @@ export type GatewayConfigShape = {
 };
 
 /** v2 of the on-disk shape — supports multi-instance gateway configs. */
-export type StoreShape = {
+type StoreShape = {
   version: 1 | 2;
   device?: DeviceIdentity & { createdAtMs: number };
   tokens?: Record<string, DeviceTokenEntry>; // keyed by gatewayId (sha256(url)) — already multi-instance
@@ -197,25 +197,34 @@ export class Store {
     }
     if (state.configs) {
       for (const [instance, cfg] of Object.entries(state.configs)) {
+        const isDefault = instance === DEFAULT_INSTANCE;
         if (!cfg.gatewayToken) {
-          const v = await kc.get(`gateway-token:${instance}`);
+          const v = await this.readWithLegacyFallback(kc, `gateway-token:${instance}`, "gateway-token", isDefault);
           if (v) cfg.gatewayToken = v;
-          // Legacy fallback: pre-0.4.0 keychain entries used un-namespaced keys.
-          else if (instance === DEFAULT_INSTANCE) {
-            const legacy = await kc.get("gateway-token");
-            if (legacy) cfg.gatewayToken = legacy;
-          }
         }
         if (!cfg.gatewayPassword) {
-          const v = await kc.get(`gateway-password:${instance}`);
+          const v = await this.readWithLegacyFallback(kc, `gateway-password:${instance}`, "gateway-password", isDefault);
           if (v) cfg.gatewayPassword = v;
-          else if (instance === DEFAULT_INSTANCE) {
-            const legacy = await kc.get("gateway-password");
-            if (legacy) cfg.gatewayPassword = legacy;
-          }
         }
       }
     }
+  }
+
+  // Pre-0.4.0 keychain entries used un-namespaced keys; for the default
+  // instance we still consult the legacy key when the namespaced one is empty.
+  private async readWithLegacyFallback(
+    kc: KeychainBackend,
+    primaryKey: string,
+    legacyKey: string,
+    isDefaultInstance: boolean,
+  ): Promise<string | null> {
+    const v = await kc.get(primaryKey);
+    if (v) return v;
+    if (isDefaultInstance) {
+      const legacy = await kc.get(legacyKey);
+      if (legacy) return legacy;
+    }
+    return null;
   }
 
   async loadDevice(): Promise<(DeviceIdentity & { createdAtMs: number }) | undefined> {

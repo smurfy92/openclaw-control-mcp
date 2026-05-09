@@ -2,7 +2,7 @@ import { z } from "zod";
 import { DEFAULT_INSTANCE, type Store } from "../gateway/store.js";
 import type { ToolDef } from "./cron.js";
 
-export type SetupHooks = {
+type SetupHooks = {
   reconfigure: (
     cfg: { gatewayUrl?: string; gatewayToken?: string; gatewayPassword?: string },
     instance?: string,

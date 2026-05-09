@@ -34,7 +34,7 @@ export async function verifyDeviceId(d: DeviceIdentity): Promise<DeviceIdentity>
   return { ...d, deviceId: expected };
 }
 
-export type SignConnectInput = {
+type SignConnectInput = {
   deviceId: string;
   clientId: string;
   clientMode: string;

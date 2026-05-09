@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { generateDevice, signConnect, verifyDeviceId, type DeviceIdentity } from "./device.js";
 import { Store, type DeviceTokenEntry } from "./store.js";
 
-export type GatewayClientOptions = {
+type GatewayClientOptions = {
   url: string;
   token?: string;
   password?: string;
@@ -480,7 +480,7 @@ export function enrichRequestError(
 
 export function isTransientError(err: Error): boolean {
   if (err instanceof GatewayError) {
-    if (err.retryable === true) return true;
+    if (err.retryable) return true;
     // Server-side hints we should not retry: scope/auth/validation errors are user-fixable.
     const code = err.code ?? "";
     if (/INVALID|FORBIDDEN|MISSING|NOT_FOUND|PAIRING|UNAUTHENTICATED|CONFLICT/i.test(code)) return false;

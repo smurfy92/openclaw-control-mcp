@@ -1,12 +1,12 @@
 import type { CallOpts, ToolClient } from "../../src/tools/client.js";
 
-export type MockCall = {
+type MockCall = {
   method: string;
   params: unknown;
   opts?: CallOpts;
 };
 
-export type MockClientHandle = {
+type MockClientHandle = {
   client: ToolClient;
   calls: MockCall[];
   setNextResponse(value: unknown): void;

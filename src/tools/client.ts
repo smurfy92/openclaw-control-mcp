@@ -4,7 +4,7 @@ import type { PairingPending } from "../gateway/client.js";
 
 export type CallOpts = { instance?: string };
 
-export type LastHello = {
+type LastHello = {
   type?: string;
   protocol?: number;
   server?: { version?: string; connId?: string };
