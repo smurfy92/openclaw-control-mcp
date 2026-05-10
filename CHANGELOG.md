@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-05-10
+
 ### Changed
 
 - **Single-item OS keychain bundle** — every secret (device private key, per-gateway device tokens, gateway tokens, gateway passwords) now lives in one `secrets-bundle` JSON item instead of N individual items. On macOS this drops the keychain access prompt count from 3-5 to 1 per process. Migration is lazy and transparent: when no bundle is present, the legacy individual items are still read on first load, and the next `save()` writes the bundle and deletes the legacy items best-effort. No env var to opt out — opting out of the keychain entirely (`OPENCLAW_USE_KEYCHAIN=0`) keeps the pre-0.5 plain-JSON behaviour.
 
 ### Added
 
-- 3 new vitest cases covering bundle migration: legacy-only read fallback, first-save migrates and deletes legacy items, corrupt bundle falls back to legacy reads (197 total, was 194).
+- 3 new vitest cases covering bundle migration: legacy-only read fallback, first-save migrates and deletes legacy items, corrupt bundle falls back to legacy reads (194 total, was 191).
 
 ### Documentation
 
