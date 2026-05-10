@@ -84,7 +84,7 @@ export function buildStatusTools(client: ToolClient): ToolDef[] {
     inputSchema: withInstance(z
       .object({
         event: z.string().min(1).describe("Event name"),
-        payload: z.unknown().optional(),
+        payload: z.unknown().optional().describe("Arbitrary JSON-serializable payload — forwarded to the gateway bus as-is. No schema enforced because consumers vary."),
       })
       .passthrough()),
     handler: passthroughHandler(client, "system-event"),

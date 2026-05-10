@@ -31,7 +31,7 @@ export function buildNodeTools(client: ToolClient): ToolDef[] {
       .object({
         nodeId: z.string().min(1),
         method: z.string().min(1),
-        params: z.unknown().optional(),
+        params: z.unknown().optional().describe("JSON-RPC params — opaque passthrough to the target node method. Shape depends on the method being invoked."),
       })
       .passthrough()),
     handler: passthroughHandler(client, "node.invoke"),

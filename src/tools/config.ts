@@ -32,7 +32,7 @@ export function buildConfigTools(client: ToolClient): ToolDef[] {
     inputSchema: withInstance(z
       .object({
         path: z.string().min(1).describe("Dotted path of the config key to set"),
-        value: z.unknown().describe("New value (any JSON)"),
+        value: z.unknown().describe("New value — any JSON-serializable value (string, number, boolean, object, array, null). Passthrough: no schema enforced because the gateway config tree is open-typed."),
       })
       .passthrough()),
     handler: passthroughHandler(client, "config.set"),
@@ -46,7 +46,7 @@ export function buildConfigTools(client: ToolClient): ToolDef[] {
       raw: z.string().optional().describe("Full new config as a JSON string. Use this when you've already serialized the new state. Mutually exclusive with mergePath/mergeValue."),
       baseHash: z.string().optional().describe("Hash of the config the patch is based on. Required with `raw`. Get it from openclaw_config_get."),
       mergePath: z.string().optional().describe("Convenience: dotted path to merge `mergeValue` into. The tool fetches the current config and merges client-side."),
-      mergeValue: z.unknown().optional().describe("Convenience: object/value to deep-merge at `mergePath`."),
+      mergeValue: z.unknown().optional().describe("Convenience: object/value to deep-merge at `mergePath`. Any JSON-serializable value — passthrough, no schema enforced."),
     })),
     handler: async (args) => {
       const { rest, opts } = splitInstance(args);
