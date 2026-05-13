@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-05-13
+
 ### Fixed
 
 - **`OPENCLAW_GATEWAY_TOKEN` alone now works.** Setting only the token env var (without `OPENCLAW_GATEWAY_URL` alongside) used to silently fall back to the on-disk store and ignore the env value — so `OPENCLAW_GATEWAY_TOKEN=… node dist/index.js --health` sent `auth: {}` to the gateway and got back `unauthorized: gateway token missing`. The credential resolution is now per-field: env wins when set, store fills in the rest. Empty strings in the store (post-wipe state) are treated as missing. New `mergeCreds` helper in `src/gateway/store.ts` + 5 unit tests pin the behaviour.
