@@ -20,8 +20,18 @@ fleets, prefer Option B.
 
 ### macOS (keychain bundle)
 
+The bundle item is keyed as service `openclaw-control-mcp:secrets-bundle`
+(namespaced prefix) with the account set to the current unix user — NOT
+service `openclaw-control-mcp` with account `secrets-bundle`. Two common
+pitfalls:
+
+- swapping the `-s` / `-a` args returns "specified item could not be found"
+- the bundle is only written by 0.6.1+; if you came from an older version,
+  trigger any tool call once first so the lazy migration writes the bundle
+
 ```bash
-BUNDLE=$(security find-generic-password -s "openclaw-control-mcp" -a "secrets-bundle" -w)
+USER=$(whoami)
+BUNDLE=$(security find-generic-password -a "$USER" -s "openclaw-control-mcp:secrets-bundle" -w)
 GW_ID=$(cat ~/.config/openclaw-control-mcp/store.json | jq -r '.tokens | keys[0]')
 
 DEVICE_PRIVATE_KEY=$(echo "$BUNDLE" | jq -r '.device.privateKey')
