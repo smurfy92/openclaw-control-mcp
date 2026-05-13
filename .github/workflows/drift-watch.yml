@@ -6,8 +6,18 @@
 # artifact (90d retention), and opens a labelled issue if drift or a fatal
 # error is detected.
 #
+# Runs on a SELF-HOSTED runner installed on the same host as the gateway, so
+# the gateway can be reached on the loopback / private interface without
+# opening port 18789 to the public internet or to GitHub Actions IP ranges.
+#
+# Runner pre-requisites (one-time):
+#   - Node.js 22+ (or let actions/setup-node provision it)
+#   - `gh` CLI authenticated to this repo
+#   - `jq`
+#   - Network reachability to the gateway URL configured in the repo secret
+#
 # Required repo secrets:
-#   - OPENCLAW_GATEWAY_URL    e.g. wss://gateway.example.com:PORT/v1/ws
+#   - OPENCLAW_GATEWAY_URL    e.g. ws://127.0.0.1:18789/v1/ws when colocated
 #   - OPENCLAW_GATEWAY_TOKEN  admin/operator token (no device-pair needed for read-only probes)
 #
 # Schedule: Monday 09:00 UTC. Trigger manually with `gh workflow run drift-watch.yml`.
@@ -24,7 +34,7 @@ permissions:
 
 jobs:
   verify-live:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       RUN_ID: ${{ github.run_id }}
