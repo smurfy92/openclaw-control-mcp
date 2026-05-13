@@ -16,7 +16,7 @@
 
 import { writeFile } from "node:fs/promises";
 import { GatewayClient } from "../src/gateway/client.js";
-import { Store } from "../src/gateway/store.js";
+import { mergeCreds, Store } from "../src/gateway/store.js";
 import type { CallOpts, ToolClient } from "../src/tools/client.js";
 import type { ToolDef } from "../src/tools/cron.js";
 import { buildAdminTools } from "../src/tools/admin.js";
@@ -190,15 +190,34 @@ function parseArgsCli(): { json: boolean; out: string | null; include: string[];
 async function main() {
   const cli = parseArgsCli();
   const store = new Store();
-  const cfg = await store.loadConfig();
-  if (!cfg.gatewayUrl) {
-    process.stderr.write("no gateway configured — run openclaw_setup first\n");
-    process.exit(1);
+  // Same resolution order as src/index.ts: env-only is enough (the runtime
+  // path the MCP server takes when given OPENCLAW_GATEWAY_URL/TOKEN with no
+  // on-disk store). Fall back to the persisted config when env is incomplete.
+  const ENV_URL = process.env.OPENCLAW_GATEWAY_URL?.trim() || undefined;
+  const ENV_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
+  const ENV_PASSWORD = process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || undefined;
+  let url = ENV_URL;
+  let token = ENV_TOKEN;
+  let password = ENV_PASSWORD;
+  let gatewayUrlForReport = url;
+  if (!url) {
+    const cfg = await store.loadConfig();
+    if (!cfg.gatewayUrl) {
+      process.stderr.write(
+        "no gateway configured — set OPENCLAW_GATEWAY_URL/OPENCLAW_GATEWAY_TOKEN or run openclaw_setup first\n",
+      );
+      process.exit(1);
+    }
+    url = cfg.gatewayUrl;
+    const merged = mergeCreds({ token, password }, cfg);
+    token = merged.token;
+    password = merged.password;
+    gatewayUrlForReport = url;
   }
   const real = new GatewayClient({
-    url: cfg.gatewayUrl,
-    token: cfg.gatewayToken,
-    password: cfg.gatewayPassword,
+    url,
+    token,
+    password,
     store,
     debug,
   });
@@ -292,7 +311,7 @@ async function main() {
 
   const report = {
     generatedAt: new Date().toISOString(),
-    gateway: { url: cfg.gatewayUrl },
+    gateway: { url: gatewayUrlForReport },
     summary: {
       totalProbes: outcomes.length,
       byStatus,
@@ -305,7 +324,7 @@ async function main() {
   if (cli.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
   } else {
-    process.stdout.write(`\n=== verify-all-tools — ${outcomes.length} probes against ${cfg.gatewayUrl} ===\n`);
+    process.stdout.write(`\n=== verify-all-tools — ${outcomes.length} probes against ${gatewayUrlForReport} ===\n`);
     for (const o of outcomes) {
       const icon =
         o.status === "ok"
