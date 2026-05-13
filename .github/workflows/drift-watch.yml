@@ -1,0 +1,122 @@
+# Drift Watch — weekly + on-demand verify:live against the live gateway.
+#
+# What it does: runs scripts/verify-all-tools.ts (read-only probes) against the
+# configured gateway, captures wrapper-level Zod errors and gateway-level
+# INVALID_REQUEST responses (= schema drift), uploads the JSON report as an
+# artifact (90d retention), and opens a labelled issue if drift or a fatal
+# error is detected.
+#
+# Required repo secrets:
+#   - OPENCLAW_GATEWAY_URL    e.g. wss://gateway.example.com:PORT/v1/ws
+#   - OPENCLAW_GATEWAY_TOKEN  admin/operator token (no device-pair needed for read-only probes)
+#
+# Schedule: Monday 09:00 UTC. Trigger manually with `gh workflow run drift-watch.yml`.
+name: Drift Watch
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify-live:
+    runs-on: ubuntu-latest
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run verify:live
+        id: verify
+        env:
+          OPENCLAW_GATEWAY_URL: ${{ secrets.OPENCLAW_GATEWAY_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          set +e
+          npx tsx scripts/verify-all-tools.ts --json --out drift-report.json
+          EXIT=$?
+          set -e
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          if [ "$EXIT" = "2" ]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EXIT" != "0" ]; then
+            echo "fatal=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('drift-report.json') != ''
+        with:
+          name: drift-report-${{ github.run_id }}
+          path: drift-report.json
+          retention-days: 90
+
+      - name: Ensure labels exist
+        if: steps.verify.outputs.drift == 'true' || steps.verify.outputs.fatal == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create drift --color FBCA04 --description "Wrapper/gateway schema drift detected by verify:live" || true
+          gh label create automated --color C5DEF5 --description "Opened by an automated workflow" || true
+
+      - name: Open issue on drift
+        if: steps.verify.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DRIFT_COUNT=$(jq -r '.summary.driftCount' drift-report.json)
+          GATEWAY=$(jq -r '.gateway.url' drift-report.json)
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            printf '%s\n\n' "The weekly drift-watch run detected schema drift between wrappers and the live gateway."
+            printf -- '- **Date (UTC)**: %s\n' "$DATE"
+            printf -- '- **Gateway**: `%s`\n' "$GATEWAY"
+            printf -- '- **Drift count**: %s\n' "$DRIFT_COUNT"
+            printf -- '- **Run**: %s\n\n' "$RUN_URL"
+            printf '## Drifts\n\n'
+            jq -r '.drifts[] | "- **\(.tool)** (RPC `\(.method // "?")`): \(.errorMessage)"' drift-report.json
+            printf '\n## Next steps\n\n'
+            printf '1. Download the `drift-report-%s` artifact for full context.\n' "$RUN_ID"
+            printf '2. Inspect each drifting wrapper in `src/tools/` and align its Zod schema.\n'
+            printf '3. Add a regression test under `tests/` so the drift is caught at unit-test time too.\n'
+            printf '4. Cut a patch release once green.\n'
+          } > issue-body.md
+          gh issue create \
+            --title "drift-watch: $DRIFT_COUNT schema drift(s) on $DATE" \
+            --label drift \
+            --label automated \
+            --body-file issue-body.md
+
+      - name: Open issue on fatal error
+        if: steps.verify.outputs.fatal == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXIT_CODE: ${{ steps.verify.outputs.exit_code }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            printf '%s\n\n' "The weekly drift-watch run failed before it could complete (exit code $EXIT_CODE)."
+            printf -- '- **Date (UTC)**: %s\n' "$DATE"
+            printf -- '- **Run**: %s\n\n' "$RUN_URL"
+            printf 'Likely causes: gateway unreachable from the GitHub runner, missing/expired `OPENCLAW_GATEWAY_TOKEN` secret, or auth flow regression. Check the run logs and the gateway uptime.\n'
+          } > issue-body.md
+          gh issue create \
+            --title "drift-watch: fatal run failure on $DATE" \
+            --label drift \
+            --label automated \
+            --body-file issue-body.md
+
+      - name: Fail the workflow if drift or fatal
+        if: steps.verify.outputs.drift == 'true' || steps.verify.outputs.fatal == 'true'
+        run: exit 1
