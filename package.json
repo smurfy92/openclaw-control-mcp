@@ -2,7 +2,7 @@
   "name": "openclaw-control-mcp",
   "version": "0.6.2",
   "mcpName": "io.github.smurfy92/openclaw-control-mcp",
-  "description": "MCP server bridging Claude Code to the OpenClaw gateway management plane (cron, sessions, agents, channels, skills, config, …) via WebSocket JSON-RPC. Wraps all 128 published methods.",
+  "description": "The OpenClaw control plane MCP server — operate the gateway's full management surface (cron, sessions, agents, channels, skills, config, secrets, doctor, …) from Claude Code, Cursor, or any MCP client. 134 typed tools covering every published JSON-RPC method.",
   "type": "module",
   "bin": {
     "openclaw-control-mcp": "dist/index.js"
@@ -18,17 +18,23 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "openclaw",
+    "control-plane",
+    "management-plane",
     "claude",
     "claude-code",
+    "cursor",
     "agent",
     "gateway",
     "websocket",
     "json-rpc",
     "ed25519",
     "cron",
-    "operator"
+    "operator",
+    "devops",
+    "automation"
   ],
   "files": [
     "dist",

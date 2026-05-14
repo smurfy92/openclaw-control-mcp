@@ -1,18 +1,20 @@
 # openclaw-control-mcp
 
 [![npm](https://img.shields.io/npm/v/openclaw-control-mcp.svg)](https://www.npmjs.com/package/openclaw-control-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/openclaw-control-mcp.svg)](https://www.npmjs.com/package/openclaw-control-mcp)
 [![CI](https://github.com/smurfy92/openclaw-control-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/smurfy92/openclaw-control-mcp/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/openclaw-control-mcp.svg)](./LICENSE)
+[![Node](https://img.shields.io/node/v/openclaw-control-mcp.svg)](https://www.npmjs.com/package/openclaw-control-mcp)
 
-MCP server bridging Claude Code (or any MCP client) to the OpenClaw gateway management plane via WebSocket JSON-RPC. **134 typed tools wrapping all 128 JSON-RPC methods** the gateway publishes — cron, sessions, agents, channels, chat, logs, models, usage, status/health, config, secrets, skills, exec/plugin approvals, wizard, doctor memory, nodes, voice (TTS / talk / voicewake) — plus device pairing and in-chat setup.
+**The OpenClaw control plane MCP server.** Operate the gateway's full management surface from Claude Code, Cursor, or any MCP client — list and trigger crons, inspect sessions, configure agents and channels, manage skills and secrets, drive the doctor memory plane, pair devices, approve exec/plugin calls. **134 typed tools** covering every JSON-RPC method the gateway publishes.
 
-The upstream `openclaw-mcp` package only wraps `/v1/chat/completions`. This wrapper talks the JSON-RPC protocol used by the OpenClaw Control panel SPA, so you can operate on the full management plane (list / trigger / configure jobs, sessions, agents, channels …) directly from the assistant.
+> Different from the upstream [`openclaw-mcp`](https://www.npmjs.com/package/openclaw-mcp), which only wraps `/v1/chat/completions`. This one talks the JSON-RPC protocol used by the OpenClaw Control panel — so you can operate the gateway itself (its crons, sessions, agents, channels, skills, secrets, …), not just chat through it.
 
 ## Status
 
-**0.4.0 / preview.** **Multi-instance gateway configs** + **134+ typed tools wrapping the 128 JSON-RPC methods the gateway publishes** — cron, sessions, agents, channels, chat, logs, models, usage, status/health/heartbeats, config, secrets, skills, exec/plugin approvals, wizard, doctor.memory, node, tts/talk/voicewake, plus device pairing & in-chat setup. The two introspection tools `openclaw_introspect` (lists every method/event the gateway publishes in its `hello-ok`) and `openclaw_call` (escape hatch for any method) make new gateway endpoints reachable without waiting on a release.
+**0.6.2** — published on npm, indexed on the official MCP Registry as `io.github.smurfy92/openclaw-control-mcp`. Multi-instance gateway configs, OS keychain-backed secret storage, 134 typed tools across the 128 published JSON-RPC methods, plus two escape hatches: `openclaw_introspect` enumerates every method/event the gateway publishes in its `hello-ok`, and `openclaw_call` lets you reach any method that doesn't have a typed wrapper yet — so new gateway endpoints are reachable without waiting on a release.
 
-WS connect + signed Ed25519 handshake working against a managed Hostinger gateway (verified `2026.4.12`). On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
+The Ed25519 signed handshake is verified live against gateway `2026.4.12+`. On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`) — or in the OS keychain when available — signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
 The wire format (frame types, field names, signing canonicalisation, scopes) was reverse-engineered from the minified Control panel bundle (`/api-docs/assets/index-*.js`) and cross-checked against `openclaw/openclaw/scripts/dev/gateway-smoke.ts`. It is **not officially documented**. Behaviour may change without notice if OpenClaw updates the gateway.
 
