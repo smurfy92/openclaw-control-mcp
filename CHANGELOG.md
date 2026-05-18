@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`SECURITY.md`** policy file added at the repo root. Documents the reporting channel (private GitHub security advisory), the in-scope vs out-of-scope surface, the current state of the 4 transitive advisories inherited from `@modelcontextprotocol/sdk@1.29.0` (none fixable in this wrapper, all tracked upstream), and a 6-step hardening checklist for operators running the HTTP transport.
+
+### Changed
+
+- **`types` + `exports` fields** added to `package.json`. `dist/index.d.ts` is now advertised as the type entrypoint, and the `exports` map declares the package and `package.json` as the only public entries. Fixes the "no type declarations advertised" and "missing entry points" warnings on Socket-style supply-chain scanners. `files` whitelist now also ships `SECURITY.md`.
+
 ### Added
 
 - **Bearer-token auth for the HTTP transport.** `OPENCLAW_HTTP_BEARER` (or `--http-bearer=<token>`) gates every `/mcp` request with a constant-time `Authorization: Bearer <token>` check (`crypto.timingSafeEqual`). Mismatched or missing headers get `401 Unauthorized` with a `WWW-Authenticate: Bearer realm="openclaw-control-mcp"` response. Binding to a non-loopback host (`0.0.0.0`, public IP) without a bearer now refuses to start instead of exposing every tool unauthenticated — loopback-without-bearer still starts but logs a loud warning. ADR-005 (Streamable HTTP transport) marked Accepted at this point. 8 new vitest cases covering the bearer-check helper (218 total, was 210).
