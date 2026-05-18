@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bearer-token auth for the HTTP transport.** `OPENCLAW_HTTP_BEARER` (or `--http-bearer=<token>`) gates every `/mcp` request with a constant-time `Authorization: Bearer <token>` check (`crypto.timingSafeEqual`). Mismatched or missing headers get `401 Unauthorized` with a `WWW-Authenticate: Bearer realm="openclaw-control-mcp"` response. Binding to a non-loopback host (`0.0.0.0`, public IP) without a bearer now refuses to start instead of exposing every tool unauthenticated — loopback-without-bearer still starts but logs a loud warning. ADR-005 (Streamable HTTP transport) marked Accepted at this point. 8 new vitest cases covering the bearer-check helper (218 total, was 210).
+
 ### Documentation
 
 - **README repositioned around the "control plane MCP server" narrative.** New `Without vs with` problem/solution intro, `Quickstart` section with one-click install deeplinks for Cursor (`cursor://anysphere.cursor-deeplink/mcp/install?…`) and VS Code (`vscode:mcp/install?…`), and `claude mcp add` one-liner. The differentiator vs the upstream `openclaw-mcp` (which only wraps `/v1/chat/completions`) is now stated explicitly in the lead paragraph.

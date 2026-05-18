@@ -148,12 +148,28 @@ Configure each gateway with `openclaw_setup({ instance: "work", gatewayUrl, gate
 For clients that don't speak stdio (Cursor, Continue, Cline, Zed, browser), run the MCP as a Streamable HTTP server:
 
 ```bash
+# Loopback (default 127.0.0.1:3333), no bearer — fine for local trust
 npx -y openclaw-control-mcp --http --http-port=3333
-# or
-OPENCLAW_HTTP=1 OPENCLAW_HTTP_PORT=3333 npx -y openclaw-control-mcp
+
+# Same, but with bearer auth on (recommended even on loopback)
+OPENCLAW_HTTP=1 OPENCLAW_HTTP_BEARER="$(openssl rand -hex 32)" \
+  npx -y openclaw-control-mcp
+
+# Bound to a public interface — bearer is REQUIRED (server refuses to start without)
+OPENCLAW_HTTP=1 OPENCLAW_HTTP_HOST=0.0.0.0 OPENCLAW_HTTP_PORT=3333 \
+  OPENCLAW_HTTP_BEARER="$(openssl rand -hex 32)" \
+  npx -y openclaw-control-mcp
 ```
 
-Endpoint: `POST/GET http://127.0.0.1:3333/mcp` (MCP Streamable HTTP, stateful — each client gets its own session id). Stdio remains the default; the HTTP server only starts when explicitly enabled.
+Endpoint: `POST/GET http://<host>:<port>/mcp` (MCP Streamable HTTP, stateful — each client gets its own session id). Stdio remains the default; the HTTP server only starts when explicitly enabled.
+
+**Auth behaviour:**
+
+- `OPENCLAW_HTTP_BEARER` set → every `/mcp` request must include `Authorization: Bearer <token>`. Mismatched / missing tokens get `401 Unauthorized` with a `WWW-Authenticate: Bearer realm="openclaw-control-mcp"` header. Comparison is constant-time.
+- `OPENCLAW_HTTP_BEARER` unset + bound to loopback → starts with a stderr warning. Anyone with local shell access can invoke every tool.
+- `OPENCLAW_HTTP_BEARER` unset + bound to a non-loopback host (`0.0.0.0`, public IP, etc.) → the server **refuses to start**. Public binding without auth is a takeover risk and not negotiable.
+
+For long-lived deployments behind a reverse proxy, terminate TLS at the proxy (nginx, Caddy, Traefik) and forward to `127.0.0.1:3333/mcp` — the bearer protects the proxy → MCP hop too.
 
 ## Mock mode (no gateway required)
 
@@ -161,7 +177,7 @@ Set `OPENCLAW_MOCK=1` (or pass `--mock`) to swap the WebSocket client for an in-
 
 - **CI** — run tests / demos without a live gateway.
 - **Workflow rehearsals** — dry-run a sequence of `cron.add` / `cron.update` / `config.patch` calls before pointing at prod.
-- **Onboarding** — try the MCP without provisioning a Hostinger VPS.
+- **Onboarding** — try the MCP without provisioning a gateway instance.
 
 ```bash
 # stdio
@@ -382,7 +398,7 @@ This MCP server exposes secret-bearing and side-effectful gateway operations (`c
 - **`openclaw_call` is an escape hatch** — it forwards arbitrary JSON-RPC method calls. The gateway enforces per-scope permissions, but on the client side there's no input filter. Limit which tool catalogs your agent can see if untrusted prompts can reach it.
 - **`OPENCLAW_DEVICE_PRIVATE_KEY` / `OPENCLAW_DEVICE_TOKEN` env vars** (for headless / CI / service-account usage) take priority over the store. Set them only in trusted execution contexts (GitHub secrets, K8s secrets, password manager exports — not in shell history, Docker `--env`, or `.env` files committed to the repo).
 - **Prompt-injection surface**: the gateway's responses (session previews, logs, agent outputs) feed back into the MCP client and can carry attacker-controlled content. Treat any tool output as untrusted when deciding whether to call destructive tools (the destructive list is published in §Destructive tools — confirm before chaining a write tool to a read tool output).
-- **Network transport** is currently stdio only (per-process WebSocket to the gateway). When HTTP/SSE transport lands (planned 0.7), the same threat-model section will get an addendum on bearer-token handling at the HTTP layer.
+- **HTTP transport surface**: when running `--http`, the server enforces a constant-time `Bearer` check if `OPENCLAW_HTTP_BEARER` is set, refuses to bind to a non-loopback interface without one, and emits a loud stderr warning if started on loopback without one. Rotate the bearer like a gateway admin token — anything that can read it can invoke every tool, including `secrets.*` writes. Terminate TLS at a reverse proxy before exposing the HTTP port to the network.
 
 If you find a vulnerability, please open a private security advisory on GitHub rather than a public issue: <https://github.com/smurfy92/openclaw-control-mcp/security/advisories/new>.
 

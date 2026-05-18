@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // ADR-003 — Single-process shim with per-instance client cache. See docs/adr/003-single-process-shim-with-per-instance-client-cache.md.
+// ADR-005 — Streamable HTTP transport. See docs/adr/005-http-streamable-transport.md.
 import { createServer as createHttpServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -301,6 +302,24 @@ if (httpMode) {
 async function startHttpServer(): Promise<void> {
   const port = readNumberArg("--http-port", "OPENCLAW_HTTP_PORT") ?? 3333;
   const host = readStringArg("--http-host", "OPENCLAW_HTTP_HOST") ?? "127.0.0.1";
+  const bearer = readStringArg("--http-bearer", "OPENCLAW_HTTP_BEARER");
+  const isLoopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+
+  // Refuse to listen on a non-loopback interface without a bearer token —
+  // the HTTP surface invokes every tool, including secrets.* writes, and an
+  // unauthenticated server bound to 0.0.0.0 is an instant takeover.
+  if (!bearer && !isLoopback) {
+    process.stderr.write(
+      `refusing to listen on ${host}:${port} without OPENCLAW_HTTP_BEARER set — public binding requires auth.\n` +
+        `  set OPENCLAW_HTTP_BEARER=<long-random-string>, or bind to 127.0.0.1 to disable the check.\n`,
+    );
+    process.exit(1);
+  }
+  if (!bearer) {
+    process.stderr.write(
+      "WARNING: HTTP server starting without OPENCLAW_HTTP_BEARER. Loopback-only, but any local process can invoke tools.\n",
+    );
+  }
 
   // Stateful mode — assigns a session id per client so concurrent MCP clients
   // (Cursor + Continue + curl smoke-tests) don't share state. Stateless single
@@ -322,6 +341,15 @@ async function startHttpServer(): Promise<void> {
       res.end("not found — POST/GET /mcp for MCP traffic");
       return;
     }
+    if (bearer) {
+      const header = req.headers.authorization;
+      if (!checkBearer(bearer, header)) {
+        res.statusCode = 401;
+        res.setHeader("WWW-Authenticate", 'Bearer realm="openclaw-control-mcp"');
+        res.end("unauthorized");
+        return;
+      }
+    }
     transport.handleRequest(req, res).catch((err: unknown) => {
       debug(`http request failed: ${err instanceof Error ? err.message : String(err)}`);
       if (!res.headersSent) {
@@ -333,7 +361,7 @@ async function startHttpServer(): Promise<void> {
 
   await new Promise<void>((resolve) => httpServer.listen(port, host, resolve));
   process.stderr.write(
-    `openclaw-control-mcp listening on http://${host}:${port}/mcp (Streamable HTTP, MCP ${getMcpVersion()})\n`,
+    `openclaw-control-mcp listening on http://${host}:${port}/mcp (Streamable HTTP, MCP ${getMcpVersion()}, bearer-auth=${bearer ? "on" : "off"})\n`,
   );
 
   const closeHttp = async () => {
@@ -346,6 +374,21 @@ async function startHttpServer(): Promise<void> {
   process.on("SIGTERM", () => {
     closeHttp().finally(() => process.exit(0));
   });
+}
+
+/**
+ * Constant-time bearer check. Returns false for any malformed/missing header.
+ * `crypto.timingSafeEqual` requires equal-length buffers so a length mismatch
+ * is checked first — that's still safe because the attacker can't time-probe
+ * the *secret* length, only their own guess.
+ */
+export function checkBearer(expected: string, header: string | undefined): boolean {
+  if (!header || !header.startsWith("Bearer ")) return false;
+  const provided = header.slice(7);
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 function readStringArg(flag: string, envName: string): string | undefined {

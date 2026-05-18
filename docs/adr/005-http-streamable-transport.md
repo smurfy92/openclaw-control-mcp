@@ -1,7 +1,7 @@
 # ADR-005 — Streamable HTTP transport alongside stdio
 
-**Status:** Proposed
-**Date:** 2026-05-16
+**Status:** Accepted
+**Date:** 2026-05-16 (proposed), 2026-05-18 (accepted with auth layer landed)
 
 ## Context
 
