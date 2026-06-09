@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-09
+
 ### Security
 
 - **`SECURITY.md`** policy file added at the repo root. Documents the reporting channel (private GitHub security advisory), the in-scope vs out-of-scope surface, the current state of the 4 transitive advisories inherited from `@modelcontextprotocol/sdk@1.29.0` (none fixable in this wrapper, all tracked upstream), and a 6-step hardening checklist for operators running the HTTP transport.

@@ -1,6 +1,6 @@
 {
   "name": "openclaw-control-mcp",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "mcpName": "io.github.smurfy92/openclaw-control-mcp",
   "description": "The OpenClaw control plane MCP server — operate the gateway's full management surface (cron, sessions, agents, channels, skills, config, secrets, doctor, …) from Claude Code, Cursor, or any MCP client. 134 typed tools covering every published JSON-RPC method.",
   "type": "module",
