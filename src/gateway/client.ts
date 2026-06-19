@@ -309,12 +309,18 @@ export class GatewayClient {
       throw new Error("gateway not connected");
     }
     const payload = JSON.stringify(frame);
-    this.log(`> (${payload.length} bytes) ${payload.length > 600 ? payload.slice(0, 600) + "..." : payload}`);
+    // SECURITY: never put secrets (auth/token/password/deviceToken/...) into
+    // debug logs — redact before logging, but send the real payload on the wire.
+    const safe = redactSecretsString(payload);
+    this.log(`> (${payload.length} bytes) ${safe.length > 600 ? safe.slice(0, 600) + "..." : safe}`);
     this.ws.send(payload);
   }
 
   private handleMessage(raw: string) {
-    this.log(`< (${raw.length} bytes) ${raw.length > 8000 ? raw.slice(0, 8000) + "..." : raw}`);
+    // SECURITY: inbound frames carry deviceToken / secrets.resolve results —
+    // redact before logging (parse-then-redact; fall back to raw-string redaction).
+    const safe = redactSecretsString(raw);
+    this.log(`< (${raw.length} bytes) ${safe.length > 8000 ? safe.slice(0, 8000) + "..." : safe}`);
     let frame: ResFrame | EventFrame | { type: string; [k: string]: unknown };
     try {
       frame = JSON.parse(raw);
@@ -351,7 +357,15 @@ export class GatewayClient {
           typeof res.error === "object" && res.error !== null
             ? (res.error as { code?: string; message?: string; details?: unknown; retryable?: boolean; retryAfterMs?: number })
             : { message: String(res.error ?? "request failed") };
-        p.reject(new GatewayError(err));
+        // Redact any secret-shaped fields inside `details` (it can echo the
+        // submitted `config.patch` payload). `code`/`requestId` are preserved
+        // so pairing detection in doConnect() still works.
+        p.reject(
+          new GatewayError({
+            ...err,
+            details: err.details !== undefined ? redactSecrets(err.details) : undefined,
+          }),
+        );
       }
       return;
     }
@@ -408,7 +422,10 @@ export class GatewayClient {
         if (attempt === maxAttempts || !isTransientError(lastError)) {
           throw enrichRequestError(lastError, method, attempt, maxAttempts);
         }
-        const delayMs = Math.min(baseMs * 2 ** (attempt - 1), 60_000);
+        // Exponential backoff with full jitter (random in [base/2, base]) to
+        // avoid thundering-herd reconnect storms when many clients retry at once.
+        const capped = Math.min(baseMs * 2 ** (attempt - 1), 60_000);
+        const delayMs = Math.round(capped / 2 + Math.random() * (capped / 2));
         this.log(`request '${method}' attempt ${attempt}/${maxAttempts} failed (${lastError.message}); retrying in ${delayMs}ms`);
         // Reset connection state so the next attempt re-handshakes from a clean slate
         if (this.ws) {
@@ -506,4 +523,44 @@ export function isTransientError(err: Error): boolean {
 
 export function isStaleNonceError(err: Error): boolean {
   return /nonce mismatch|stale[_\s-]?nonce/i.test(err.message);
+}
+
+const REDACTED = "[REDACTED]";
+
+/**
+ * Field names whose values must never reach a debug log. Matched
+ * case-insensitively. Covers connect-auth credentials, persisted device
+ * tokens, and any `secret`/`password`-shaped key (e.g. the values returned by
+ * `secrets.resolve` or stored via `config.patch` under `config.secrets.*`).
+ */
+const SECRET_KEY_RE = /^(auth|token|password|secret|secrets|deviceToken|privateKey|apiKey|bearer)$/i;
+
+/**
+ * Recursively clone `value`, replacing the value of any secret-shaped key with
+ * a redaction marker. Pure (does not mutate the input). Used before every debug
+ * log of a gateway frame so credentials/tokens never leak.
+ */
+export function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((v) => redactSecrets(v));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = SECRET_KEY_RE.test(k) ? REDACTED : redactSecrets(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Redact secrets inside a serialized JSON string. Parses, redacts, re-serializes.
+ * If the string is not valid JSON, returns a fully-masked placeholder rather
+ * than risk leaking an unparseable-but-sensitive payload.
+ */
+export function redactSecretsString(raw: string): string {
+  try {
+    return JSON.stringify(redactSecrets(JSON.parse(raw)));
+  } catch {
+    return `[unparseable frame, ${raw.length} bytes ${REDACTED}]`;
+  }
 }
