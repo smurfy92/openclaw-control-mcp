@@ -12,7 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { formatAgo } from "./format.js";
-import { GatewayClient } from "./gateway/client.js";
+import { GatewayClient, GatewayError, redactSecrets } from "./gateway/client.js";
 import { MockGateway } from "./gateway/mock.js";
 import { mergeCreds, Store } from "./gateway/store.js";
 import type { CallOpts, ToolClient } from "./tools/client.js";
@@ -259,7 +259,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (!parsed.success) {
     throw new Error(`invalid arguments for ${tool.name}: ${parsed.error.message}`);
   }
-  const result = await tool.handler(parsed.data);
+  let result: unknown;
+  try {
+    result = await tool.handler(parsed.data);
+  } catch (err) {
+    throw sanitizeToolError(err);
+  }
   return {
     content: [
       {
@@ -269,6 +274,24 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     ],
   };
 });
+
+/**
+ * Flatten/redact errors before they cross the MCP boundary. GatewayError can
+ * carry a raw `details` blob that may echo the full `config.patch` payload (incl.
+ * secrets) or other sensitive server internals — we surface only the human
+ * message + code, and redact any secret-shaped fields if details must be kept.
+ */
+function sanitizeToolError(err: unknown): Error {
+  if (err instanceof GatewayError) {
+    const codeSuffix = err.code ? ` [${err.code}]` : "";
+    return new Error(`${err.message}${codeSuffix}`);
+  }
+  if (err instanceof Error) {
+    // Drop any attached `cause`/`details` blobs; keep just the message.
+    return new Error(err.message);
+  }
+  return new Error(String(redactSecrets(err)));
+}
 
 async function shutdown() {
   for (const c of clients.values()) await c.close().catch(() => {});

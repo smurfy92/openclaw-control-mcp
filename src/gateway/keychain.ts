@@ -56,6 +56,10 @@ class MacosSecurityBackend implements KeychainBackend {
   }
 
   async set(key: string, value: string): Promise<void> {
+    // SECURITY: pass the secret on stdin, never as a CLI argument — argv is
+    // world-readable via `ps`/`/proc`. With `-w` and no inline value, the
+    // `security` tool reads the password from stdin (mirrors the libsecret
+    // backend, which already pipes via `input`).
     const result = spawnSync(
       "security",
       [
@@ -64,13 +68,12 @@ class MacosSecurityBackend implements KeychainBackend {
         this.account,
         "-s",
         namespacedKey(key),
-        "-w",
-        value,
+        "-w", // no value: read the password from stdin
         "-U", // update if exists
         "-T",
         "/usr/bin/security", // allow `security` itself to read without prompting
       ],
-      { encoding: "utf8" },
+      { input: value, encoding: "utf8" },
     );
     if (result.status !== 0) {
       throw new Error(`macos keychain set failed: ${result.stderr.trim() || result.stdout.trim()}`);
