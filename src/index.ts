@@ -153,7 +153,7 @@ const mockGateway = MOCK_MODE ? new MockGateway() : null;
 // `openclaw_device_status`, `openclaw_health` etc. don't crash on null.
 const MOCK_HELLO = {
   type: "hello",
-  protocol: 3,
+  protocol: 4,
   server: { version: "mock-2026.0.0", connId: "mock-conn" },
   features: { methods: [] as string[], events: [] as string[] },
 };

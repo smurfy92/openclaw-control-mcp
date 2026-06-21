@@ -212,8 +212,8 @@ export class GatewayClient {
     if (tokenEntry?.token) auth.deviceToken = tokenEntry.token;
 
     const params = {
-      minProtocol: 3,
-      maxProtocol: 3,
+      minProtocol: 4,
+      maxProtocol: 4,
       client: {
         id: CLIENT_ID,
         displayName: this.opts.clientName,
