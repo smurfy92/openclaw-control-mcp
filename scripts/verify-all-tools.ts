@@ -364,4 +364,13 @@ async function main() {
   if (drifts.length > 0) process.exit(2);
 }
 
-await main();
+// A connect failure (stale device token, bad signature, gateway down, …) rejects
+// before the probe loop and would otherwise surface as an ugly unhandled
+// rejection. Catch it here and exit non-zero (≠2) so the drift-watch workflow
+// classifies it as "fatal" with a clean, single-line message instead of a stack.
+main().catch((err: unknown) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: string }).code;
+  process.stderr.write(`verify-all-tools: fatal — ${msg}${code ? ` (code=${code})` : ""}\n`);
+  process.exit(1);
+});
