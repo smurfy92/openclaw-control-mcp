@@ -107,7 +107,7 @@ export function buildSetupTools(store: Store, hooks: SetupHooks): ToolDef[] {
       const stored = all.configs[instance] ?? {};
       const effectiveUrl = env.gatewayUrl ?? stored.gatewayUrl;
       const effectiveSource = env.gatewayUrl ? "env" : stored.gatewayUrl ? "store" : "none";
-      const secretsLocation = await store.secretsLocation();
+      const secretsLocation = store.secretsLocation();
       return {
         instance,
         defaultInstance: all.defaultInstance,
@@ -137,12 +137,12 @@ export function buildSetupTools(store: Store, hooks: SetupHooks): ToolDef[] {
   const setupList: ToolDef = {
     name: "openclaw_setup_list",
     description:
-      "List every persisted gateway instance (name + URL + whether token/password are set, never the values). Plus the active default instance and where secrets live (file vs OS keychain).",
+      "List every persisted gateway instance (name + URL + whether token/password are set, never the values). Plus the active default instance and where secrets come from (env vars / `.env` vs `store.json`).",
     inputSchema: z.object({}),
     handler: async () => {
       const all = await store.loadConfigs();
       const env = hooks.envOverride();
-      const secretsLocation = await store.secretsLocation();
+      const secretsLocation = store.secretsLocation();
       return {
         defaultInstance: all.defaultInstance,
         secretsLocation,

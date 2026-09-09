@@ -1,6 +1,6 @@
 # ADR-001 — Multi-instance Store with keychain-backed secrets
 
-**Status:** Accepted
+**Status:** Accepted — keychain half **superseded by [ADR-006](006-env-file-secrets-no-keychain.md)** (0.8.0)
 **Date:** 2026-05-09
 
 ## Context
@@ -52,3 +52,9 @@ Since 0.6.1 every secret is bundled into a single `secrets-bundle` JSON item (`{
 - Corrupt bundle falls back to the legacy reads, then rewrites a clean bundle on next save.
 
 The keychain backend interface (`KeychainBackend.get/set/delete`) is unchanged — the bundle is purely a Store-side packaging decision.
+
+## Evolution — 0.8.0: keychain removed
+
+The multi-instance Store design above is unchanged and still current. The **keychain-backed** half is not: 0.8.0 deletes `src/gateway/keychain.ts` and every keychain branch in the Store. Secrets now resolve from the environment (`.env` loaded by `src/gateway/env-file.ts`) then `store.json` (mode 0600). The rationale — an unauditable `spawnSync` into the OS credential store was costing user trust for a threat-model gain that mode 0600 already provided — is recorded in [ADR-006](006-env-file-secrets-no-keychain.md).
+
+Everything above about `configs`, `defaultInstance`, per-gateway `tokens`, the v1 → v2 migration, `deviceIntegrity()` and `repairDevice()` still describes the shipped code. Read the keychain paragraphs (including the 0.6.1 bundle section) as history.

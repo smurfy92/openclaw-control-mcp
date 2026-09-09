@@ -9,7 +9,7 @@ let store: Store;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "openclaw-multi-instance-"));
-  store = new Store(dir, "store.json", { keychain: null });
+  store = new Store(dir, "store.json");
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -30,7 +30,7 @@ describe("Store multi-instance API", () => {
     expect(Object.keys(all.configs).sort()).toEqual(["perso", "work"]);
     expect(all.configs.perso.gatewayUrl).toBe("wss://perso-gw");
     expect(all.configs.work.gatewayUrl).toBe("wss://work-gw");
-    expect(all.configs.perso.gatewayToken).toBe("T-PERSO"); // no keychain → token stays in JSON
+    expect(all.configs.perso.gatewayToken).toBe("T-PERSO"); // secrets stay in store.json (mode 0600)
     expect(all.configs.work.gatewayToken).toBe("T-WORK");
   });
 

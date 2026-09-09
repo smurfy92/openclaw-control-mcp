@@ -87,7 +87,7 @@ describe("Store env override", () => {
   });
 
   it("loadDevice returns the env-derived device and ignores the persisted one", async () => {
-    const store = new Store(dir, "store.json", { keychain: null });
+    const store = new Store(dir, "store.json");
     const persisted = await generateDevice();
     await store.saveDevice({ ...persisted, createdAtMs: 1 });
 
@@ -100,7 +100,7 @@ describe("Store env override", () => {
   });
 
   it("loadDevice falls back to the persisted device when env is unset", async () => {
-    const store = new Store(dir, "store.json", { keychain: null });
+    const store = new Store(dir, "store.json");
     const persisted = await generateDevice();
     await store.saveDevice({ ...persisted, createdAtMs: 42 });
 
@@ -110,7 +110,7 @@ describe("Store env override", () => {
   });
 
   it("loadToken returns the env-derived token regardless of gatewayId", async () => {
-    const store = new Store(dir, "store.json", { keychain: null });
+    const store = new Store(dir, "store.json");
     await store.saveToken("gw-xyz", { token: "stored", role: "operator", scopes: ["a"], savedAtMs: 1 });
     process.env.OPENCLAW_DEVICE_TOKEN = "env-token";
 
@@ -121,7 +121,7 @@ describe("Store env override", () => {
   });
 
   it("loadToken falls back to the persisted token when env is unset", async () => {
-    const store = new Store(dir, "store.json", { keychain: null });
+    const store = new Store(dir, "store.json");
     await store.saveToken("gw-xyz", { token: "stored", role: "operator", scopes: ["a"], savedAtMs: 1 });
 
     const e = await store.loadToken("gw-xyz");

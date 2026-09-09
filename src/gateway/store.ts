@@ -1,11 +1,13 @@
-// ADR-001 — Multi-instance Store with keychain-backed secrets. See docs/adr/001-multi-instance-store-with-keychain-backed-secrets.md.
+// ADR-001 — Multi-instance Store with keychain-backed secrets (keychain part superseded by ADR-006).
+// See docs/adr/001-multi-instance-store-with-keychain-backed-secrets.md.
+// ADR-006 — File-based secrets (.env + store.json), no OS keychain. See docs/adr/006-env-file-secrets-no-keychain.md.
 import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import * as ed from "@noble/ed25519";
 import { type DeviceIdentity, fromBase64Url, toBase64Url } from "./device.js";
-import { type KeychainBackend, maybeKeychainBackend } from "./keychain.js";
+import { resolveConfigDir } from "./env-file.js";
 
 const DEFAULT_DEVICE_SCOPES = ["operator.admin", "operator.read", "operator.write"];
 
@@ -80,68 +82,39 @@ type StoreShape = {
 
 export const DEFAULT_INSTANCE = "default";
 
-/**
- * Single keychain item that holds every secret as one JSON blob, so the OS
- * keychain only prompts once per process lifetime instead of N times (one per
- * legacy item: device-private-key, device-token:*, gateway-token:*,
- * gateway-password:*). On macOS this collapses 3-5 prompts into 1; same gain
- * on Linux libsecret.
- *
- * Migration is lazy: when the bundle is absent, we fall back to reading the
- * legacy individual items, then the next save() writes the bundle and deletes
- * the legacy items best-effort.
- */
-const BUNDLE_KEY = "secrets-bundle";
-
-type SecretsBundleV1 = {
-  version: 1;
-  device?: { privateKey: string };
-  tokens?: Record<string, string>; // gatewayId -> token
-  configs?: Record<string, { gatewayToken?: string; gatewayPassword?: string }>;
-};
-
 const XDG_BASE = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
 const LEGACY_DIR = join(XDG_BASE, "openclaw-claw-mcp");
-const DEFAULT_DIR =
-  process.env.OPENCLAW_CONTROL_HOME ??
-  process.env.OPENCLAW_CLAW_HOME ?? // backward-compat for early adopters
-  join(XDG_BASE, "openclaw-control-mcp");
+const DEFAULT_DIR = resolveConfigDir();
+
+/** Env vars that can supply a secret without ever touching `store.json`. */
+const SECRET_ENV_VARS = [
+  "OPENCLAW_DEVICE_PRIVATE_KEY",
+  "OPENCLAW_DEVICE_TOKEN",
+  "OPENCLAW_GATEWAY_TOKEN",
+  "OPENCLAW_GATEWAY_PASSWORD",
+] as const;
 
 export class Store {
   private path: string;
-  // undefined = not yet probed, null = checked and unavailable, KeychainBackend = active.
-  private keychain: KeychainBackend | null | undefined = undefined;
 
-  constructor(
-    dir: string = DEFAULT_DIR,
-    fileName: string = "store.json",
-    options: { keychain?: KeychainBackend | null } = {},
-  ) {
+  constructor(dir: string = DEFAULT_DIR, fileName: string = "store.json") {
     this.path = join(dir, fileName);
-    // Allow callers (tests) to inject or disable the keychain. `undefined`
-    // keeps the default lazy probe behaviour.
-    if (options.keychain !== undefined) this.keychain = options.keychain;
   }
 
   static gatewayId(url: string): string {
     return createHash("sha256").update(url.trim()).digest("hex").slice(0, 16);
   }
 
-  private async getKeychain(): Promise<KeychainBackend | null> {
-    if (this.keychain !== undefined) return this.keychain;
-    this.keychain = await maybeKeychainBackend();
-    return this.keychain;
-  }
-
   /**
-   * Returns a label describing where secrets are persisted, useful for
-   * `openclaw_setup_show` / `--health` output. "store.json" means everything
-   * lives in the JSON file (mode 0600). "<backend-id> + store.json" means
-   * secrets are split out into the OS keychain.
+   * Human-readable description of where secrets come from, for
+   * `openclaw_setup_show` / `--health`. Since 0.8.0 there is no OS keychain:
+   * secrets live in `store.json` (mode 0600) and/or in the environment —
+   * typically injected from a `.env` file (see `src/gateway/env-file.ts`).
    */
-  async secretsLocation(): Promise<string> {
-    const kc = await this.getKeychain();
-    return kc ? `${kc.id} + store.json` : "store.json";
+  secretsLocation(): string {
+    const fromEnv = SECRET_ENV_VARS.filter((k) => process.env[k]?.trim());
+    const file = `${this.path} (mode 0600)`;
+    return fromEnv.length > 0 ? `env: ${fromEnv.join(", ")} + ${file}` : file;
   }
 
   async load(): Promise<StoreShape> {
@@ -176,9 +149,6 @@ export class Store {
     }
     if (state.config) delete state.config;
     state.version = 2;
-
-    const kc = await this.getKeychain();
-    if (kc) await this.hydrateSecretsFromKeychain(state, kc);
     return state;
   }
 
@@ -193,221 +163,20 @@ export class Store {
     }
   }
 
+  /**
+   * Persist the store as JSON, then tighten the file mode to 0600. Secrets are
+   * written in the clear inside that file — the same trade-off every CLI that
+   * keeps a `~/.netrc`-style credential file makes, and the documented
+   * alternative is to keep them in a `.env` instead (see ADR-006).
+   */
   async save(state: StoreShape): Promise<void> {
-    const kc = await this.getKeychain();
-    const onDisk: StoreShape = kc ? await this.stripSecretsToKeychain(state, kc) : state;
     await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, JSON.stringify(onDisk, null, 2), "utf8");
+    await writeFile(this.path, JSON.stringify(state, null, 2), "utf8");
     try {
       await chmod(this.path, 0o600);
     } catch {
       // best-effort on non-POSIX
     }
-  }
-
-  /**
-   * Pull secrets out of `state` and into the keychain backend. Returns a deep
-   * clone of the state with secret fields blanked **only when the keychain
-   * write succeeded** — otherwise the secret is preserved in the on-disk JSON
-   * (mode 0600), matching pre-keychain 0.3.x behaviour. Avoids the failure
-   * mode where a backend silently no-ops the write and the only copy of the
-   * secret gets discarded (see docs/troubleshooting/empty-private-key.md).
-   *
-   * Since 0.6.1 every secret is collapsed into a single `secrets-bundle`
-   * keychain item — see BUNDLE_KEY — to slash the OS prompt count from N to 1.
-   * Legacy individual items are deleted best-effort after a successful bundle
-   * write, so first-save-after-upgrade migrates transparently.
-   */
-  private async stripSecretsToKeychain(state: StoreShape, kc: KeychainBackend): Promise<StoreShape> {
-    const cleaned: StoreShape = JSON.parse(JSON.stringify(state));
-    const bundle: SecretsBundleV1 = { version: 1 };
-
-    if (cleaned.device?.privateKey) {
-      bundle.device = { privateKey: cleaned.device.privateKey };
-    }
-    if (cleaned.tokens) {
-      const tokens: Record<string, string> = {};
-      for (const [gatewayId, entry] of Object.entries(cleaned.tokens)) {
-        if (entry?.token) tokens[gatewayId] = entry.token;
-      }
-      if (Object.keys(tokens).length > 0) bundle.tokens = tokens;
-    }
-    if (cleaned.configs) {
-      const cfgs: Record<string, { gatewayToken?: string; gatewayPassword?: string }> = {};
-      for (const [instance, cfg] of Object.entries(cleaned.configs)) {
-        const slot: { gatewayToken?: string; gatewayPassword?: string } = {};
-        if (cfg.gatewayToken) slot.gatewayToken = cfg.gatewayToken;
-        if (cfg.gatewayPassword) slot.gatewayPassword = cfg.gatewayPassword;
-        if (slot.gatewayToken || slot.gatewayPassword) cfgs[instance] = slot;
-      }
-      if (Object.keys(cfgs).length > 0) bundle.configs = cfgs;
-    }
-
-    // Empty bundle — nothing left to persist. Drop the keychain item so a
-    // previously-written bundle doesn't keep stale secrets after a clear /
-    // repair operation.
-    const hasSecrets =
-      bundle.device !== undefined ||
-      (bundle.tokens && Object.keys(bundle.tokens).length > 0) ||
-      (bundle.configs && Object.keys(bundle.configs).length > 0);
-    if (!hasSecrets) {
-      await kc.delete(BUNDLE_KEY).catch(() => {
-        /* missing-item is fine */
-      });
-      return cleaned;
-    }
-
-    const ok = await safeSet(kc, BUNDLE_KEY, JSON.stringify(bundle));
-    if (!ok) {
-      // Keychain refused — preserve secrets in store.json (mode 0600). Same
-      // safety net as pre-bundle behaviour: never discard the only copy.
-      return cleaned;
-    }
-
-    // Bundle write succeeded — blank in-memory secrets so they don't leak to
-    // store.json on disk.
-    if (cleaned.device?.privateKey) cleaned.device = { ...cleaned.device, privateKey: "" };
-    if (cleaned.tokens) {
-      for (const [gatewayId, entry] of Object.entries(cleaned.tokens)) {
-        if (entry?.token) cleaned.tokens[gatewayId] = { ...entry, token: "" };
-      }
-    }
-    if (cleaned.configs) {
-      for (const [instance, cfg] of Object.entries(cleaned.configs)) {
-        cleaned.configs[instance] = { ...cfg, gatewayToken: "", gatewayPassword: "" };
-      }
-    }
-
-    // Best-effort migration cleanup: drop the legacy individual items so the
-    // keychain stops prompting for them on the next process. Errors here are
-    // non-fatal (the legacy items become dead weight, not a correctness bug).
-    await this.deleteLegacyItems(kc, cleaned);
-    return cleaned;
-  }
-
-  /**
-   * Wipe every legacy individual keychain item that the bundle now supersedes.
-   * Best-effort — backends ignore errors on missing items, so calling this on
-   * a fresh keychain is harmless.
-   */
-  private async deleteLegacyItems(kc: KeychainBackend, state: StoreShape): Promise<void> {
-    const keys = new Set<string>(["device-private-key", "gateway-token", "gateway-password"]);
-    if (state.tokens) {
-      for (const gatewayId of Object.keys(state.tokens)) keys.add(`device-token:${gatewayId}`);
-    }
-    if (state.configs) {
-      for (const instance of Object.keys(state.configs)) {
-        keys.add(`gateway-token:${instance}`);
-        keys.add(`gateway-password:${instance}`);
-      }
-    }
-    await Promise.all(
-      [...keys].map((k) =>
-        kc.delete(k).catch(() => {
-          /* missing-item is fine */
-        }),
-      ),
-    );
-  }
-
-  /**
-   * Inverse of stripSecretsToKeychain — fills in the secret fields read from
-   * the keychain into the in-memory state. A field already populated wins
-   * over the keychain (defensive: lets the user override via env or the
-   * legacy store.json without surprise).
-   *
-   * Since 0.6.1 reads the single `secrets-bundle` item first (1 OS prompt at
-   * most). When that item is absent (fresh install, opted out, or pre-0.6.1
-   * data), falls back to the legacy per-item reads (N prompts) — the next
-   * save() will then write the bundle and migrate transparently.
-   */
-  private async hydrateSecretsFromKeychain(state: StoreShape, kc: KeychainBackend): Promise<void> {
-    const bundle = await this.readBundle(kc);
-    if (bundle) {
-      this.applyBundleToState(state, bundle);
-      return;
-    }
-    await this.hydrateFromLegacyItems(state, kc);
-  }
-
-  private async readBundle(kc: KeychainBackend): Promise<SecretsBundleV1 | null> {
-    const raw = await kc.get(BUNDLE_KEY);
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw) as SecretsBundleV1;
-      if (parsed?.version === 1) return parsed;
-      return null;
-    } catch {
-      // Corrupt bundle — treat as absent so the legacy fallback can save the
-      // session, and the next save() rewrites a clean bundle.
-      return null;
-    }
-  }
-
-  private applyBundleToState(state: StoreShape, bundle: SecretsBundleV1): void {
-    if (state.device && !state.device.privateKey && bundle.device?.privateKey) {
-      state.device.privateKey = bundle.device.privateKey;
-    }
-    if (state.tokens && bundle.tokens) {
-      for (const [gatewayId, entry] of Object.entries(state.tokens)) {
-        if (entry && !entry.token && bundle.tokens[gatewayId]) {
-          entry.token = bundle.tokens[gatewayId];
-        }
-      }
-    }
-    if (state.configs && bundle.configs) {
-      for (const [instance, cfg] of Object.entries(state.configs)) {
-        const slot = bundle.configs[instance];
-        if (!slot) continue;
-        if (!cfg.gatewayToken && slot.gatewayToken) cfg.gatewayToken = slot.gatewayToken;
-        if (!cfg.gatewayPassword && slot.gatewayPassword) cfg.gatewayPassword = slot.gatewayPassword;
-      }
-    }
-  }
-
-  private async hydrateFromLegacyItems(state: StoreShape, kc: KeychainBackend): Promise<void> {
-    if (state.device && !state.device.privateKey) {
-      const v = await kc.get("device-private-key");
-      if (v) state.device.privateKey = v;
-    }
-    if (state.tokens) {
-      for (const [gatewayId, entry] of Object.entries(state.tokens)) {
-        if (entry && !entry.token) {
-          const v = await kc.get(`device-token:${gatewayId}`);
-          if (v) entry.token = v;
-        }
-      }
-    }
-    if (state.configs) {
-      for (const [instance, cfg] of Object.entries(state.configs)) {
-        const isDefault = instance === DEFAULT_INSTANCE;
-        if (!cfg.gatewayToken) {
-          const v = await this.readWithLegacyFallback(kc, `gateway-token:${instance}`, "gateway-token", isDefault);
-          if (v) cfg.gatewayToken = v;
-        }
-        if (!cfg.gatewayPassword) {
-          const v = await this.readWithLegacyFallback(kc, `gateway-password:${instance}`, "gateway-password", isDefault);
-          if (v) cfg.gatewayPassword = v;
-        }
-      }
-    }
-  }
-
-  // Pre-0.4.0 keychain entries used un-namespaced keys; for the default
-  // instance we still consult the legacy key when the namespaced one is empty.
-  private async readWithLegacyFallback(
-    kc: KeychainBackend,
-    primaryKey: string,
-    legacyKey: string,
-    isDefaultInstance: boolean,
-  ): Promise<string | null> {
-    const v = await kc.get(primaryKey);
-    if (v) return v;
-    if (isDefaultInstance) {
-      const legacy = await kc.get(legacyKey);
-      if (legacy) return legacy;
-    }
-    return null;
   }
 
   async loadDevice(): Promise<(DeviceIdentity & { createdAtMs: number }) | undefined> {
@@ -443,10 +212,6 @@ export class Store {
       delete s.tokens[gatewayId];
       await this.save(s);
     }
-    const kc = await this.getKeychain();
-    if (kc) await kc.delete(`device-token:${gatewayId}`);
-    // save() above already rewrote the bundle without this gatewayId, so
-    // there's no separate bundle update needed.
   }
 
   /**
@@ -488,15 +253,12 @@ export class Store {
   }
 
   /**
-   * Clear one specific instance, or all of them if `instance` is omitted. Also
-   * clears the matching keychain secrets when keychain is active. If the
-   * cleared instance was the default and other instances still exist, picks an
-   * arbitrary remaining one as the new default.
+   * Clear one specific instance, or all of them if `instance` is omitted. If
+   * the cleared instance was the default and other instances still exist,
+   * picks an arbitrary remaining one as the new default.
    */
   async clearConfig(instance?: string): Promise<void> {
     const s = await this.load();
-    // Capture instance names BEFORE we mutate state, so we know which keychain entries to wipe.
-    const knownInstances = Object.keys(s.configs ?? {});
     let touched = false;
     if (instance == null) {
       // Clear everything.
@@ -518,29 +280,53 @@ export class Store {
       touched = true;
     }
     if (touched) await this.save(s);
+  }
 
-    const kc = await this.getKeychain();
-    if (!kc) return;
-    if (instance == null) {
-      // Bundle was rewritten by save() (or the configs are gone, so the
-      // bundle would only hold device + tokens now). Wipe every legacy
-      // namespaced + un-namespaced individual item for safety; the bundle
-      // itself is already up-to-date.
-      const keysToDelete = new Set<string>(["gateway-token", "gateway-password"]);
-      for (const inst of knownInstances) {
-        keysToDelete.add(`gateway-token:${inst}`);
-        keysToDelete.add(`gateway-password:${inst}`);
-      }
-      for (const k of keysToDelete) await kc.delete(k);
-    } else {
-      await kc.delete(`gateway-token:${instance}`);
-      await kc.delete(`gateway-password:${instance}`);
-      if (instance === DEFAULT_INSTANCE) {
-        // Also wipe any legacy un-namespaced entries, just in case.
-        await kc.delete("gateway-token");
-        await kc.delete("gateway-password");
+  /**
+   * Fill in secret fields that are currently empty, without touching anything
+   * already populated. Used by the one-shot `--migrate-from-keychain` import
+   * (0.7.x and older stored secrets in the OS keychain and left blanks in
+   * `store.json`); also a clean seam for any future import path.
+   *
+   * Returns the list of fields it actually wrote, so callers can report
+   * precisely what moved.
+   */
+  async importSecrets(secrets: {
+    device?: { privateKey?: string };
+    tokens?: Record<string, string>;
+    configs?: Record<string, { gatewayToken?: string; gatewayPassword?: string }>;
+  }): Promise<string[]> {
+    const s = await this.load();
+    const applied: string[] = [];
+    if (s.device && !s.device.privateKey && secrets.device?.privateKey) {
+      s.device.privateKey = secrets.device.privateKey;
+      applied.push("device.privateKey");
+    }
+    if (s.tokens && secrets.tokens) {
+      for (const [gatewayId, entry] of Object.entries(s.tokens)) {
+        const token = secrets.tokens[gatewayId];
+        if (entry && !entry.token && token) {
+          entry.token = token;
+          applied.push(`tokens.${gatewayId}`);
+        }
       }
     }
+    if (s.configs && secrets.configs) {
+      for (const [instance, cfg] of Object.entries(s.configs)) {
+        const slot = secrets.configs[instance];
+        if (!slot) continue;
+        if (!cfg.gatewayToken && slot.gatewayToken) {
+          cfg.gatewayToken = slot.gatewayToken;
+          applied.push(`configs.${instance}.gatewayToken`);
+        }
+        if (!cfg.gatewayPassword && slot.gatewayPassword) {
+          cfg.gatewayPassword = slot.gatewayPassword;
+          applied.push(`configs.${instance}.gatewayPassword`);
+        }
+      }
+    }
+    if (applied.length > 0) await this.save(s);
+    return applied;
   }
 
   async setDefaultInstance(instance: string): Promise<void> {
@@ -573,9 +359,8 @@ export class Store {
   /**
    * Wipe the broken device + cached gateway tokens. Backs up the current
    * `store.json` to `store.json.bak.<ts>` so the user can recover if needed.
-   * Also drops the matching keychain entries (`device-private-key`, all
-   * `device-token:*`). Configs (gatewayUrl, gatewayToken, gatewayPassword)
-   * are preserved — the user re-uses them on the next setup.
+   * Configs (gatewayUrl, gatewayToken, gatewayPassword) are preserved — the
+   * user re-uses them on the next setup.
    *
    * After this, the next `connect()` regenerates a fresh keypair and
    * surfaces a new pendingPairing.requestId. The orphaned approved device on
@@ -606,18 +391,6 @@ export class Store {
     beforeState.tokens = {};
     await this.save(beforeState);
 
-    // Wipe the matching keychain entries (device key + per-gateway tokens
-    // that were present before the wipe). The save() above already rewrote
-    // the bundle without device/tokens, so the bundle is in sync — but we
-    // also nuke the legacy individual items for cleanliness.
-    const kc = await this.getKeychain();
-    if (kc) {
-      await kc.delete("device-private-key");
-      for (const gatewayId of tokenIds) {
-        await kc.delete(`device-token:${gatewayId}`);
-      }
-    }
-
     return { backupPath, wiped: { device: hadDevice, tokenCount: tokenIds.length } };
   }
 }
@@ -640,20 +413,4 @@ export function mergeCreds(
     token: env.token ?? (storeCfg.gatewayToken || undefined),
     password: env.password ?? (storeCfg.gatewayPassword || undefined),
   };
-}
-
-/**
- * Attempt a keychain write and report whether it succeeded. Backends like
- * NoopBackend throw — we treat that as failure (caller keeps the secret in
- * the on-disk JSON instead of discarding it). Real backends (macOS, libsecret)
- * also throw on CLI errors; same behaviour. The helper is at module scope so
- * tests can mock it independently of the Store instance.
- */
-async function safeSet(kc: KeychainBackend, key: string, value: string): Promise<boolean> {
-  try {
-    await kc.set(key, value);
-    return true;
-  } catch {
-    return false;
-  }
 }

@@ -18,7 +18,7 @@ We aim for an initial response within 5 business days and a patched release with
 The MCP server exposes secret-bearing and side-effectful gateway operations to a LLM the operator drives via natural language. Specifically in-scope:
 
 - **Auth bypass** on the HTTP transport (`OPENCLAW_HTTP_BEARER` check, timing-safe compare, refusal to bind public without bearer)
-- **Secret leakage** from the on-disk store / OS keychain bundle (file modes, keychain ACLs, env propagation across child processes)
+- **Secret leakage** from the on-disk store or `.env` file (file modes, `.env` parsing, env propagation across child processes, redaction in logs and errors)
 - **Tool surface escape**: any way to call a tool the agent isn't supposed to reach (introspection bypass, schema bypass via `openclaw_call`)
 - **Prompt-injection paths** where a gateway response can cause the MCP wrapper to misbehave (parser issues, JSON-decoder DoS, etc.)
 - **Wire signing / Ed25519** handshake correctness (nonce reuse, signature replay)
@@ -31,15 +31,13 @@ Out-of-scope (please don't report as a security issue):
 
 ## Known dependency advisories
 
-As of 2026-05-18, `npm audit` surfaces 4 advisories, all via `@modelcontextprotocol/sdk` (currently `1.29.0`, latest):
+As of 2026-07-28 (`0.8.0`), `@modelcontextprotocol/sdk` is on `1.30.0`, which clears the `fast-uri`, `hono` and `ip-address` advisories that 0.7.0 shipped with. `npm audit` now surfaces a single remaining item:
 
-| Package | Severity | Path | Tracker |
-|---|---|---|---|
-| `fast-uri` | high | sdk → ajv → fast-uri | <https://github.com/advisories/GHSA-q3j6-qgpj-74h6> |
-| `hono` | moderate (×5) | sdk → @hono/node-server → hono | various |
-| `ip-address` | moderate | sdk → express-rate-limit → ip-address | <https://github.com/advisories/GHSA-v2v4-37r5-5v8g> |
+| Package | Severity | Path | Applies to us? | Tracker |
+|---|---|---|---|---|
+| `esbuild` | low | `tsup → esbuild` (devDependency) | No — dev-server-on-Windows only, never runs in the published package | <https://github.com/advisories/GHSA-g7r4-m6w7-qqqr> |
 
-None are fixable in this wrapper. Upstream tracking: <https://github.com/modelcontextprotocol/typescript-sdk/issues/2036>. We bump the SDK as soon as a patched release is available.
+`esbuild` is a build-time dependency and is not part of the published tarball (`files` ships `dist` only). We bump dependencies as patched releases appear.
 
 ## Hardening recommendations for operators
 
@@ -49,5 +47,5 @@ If you're running `openclaw-control-mcp` in production, follow this checklist:
 2. Generate the bearer with `openssl rand -hex 32` (or equivalent), store it in a secret manager, rotate quarterly.
 3. Put a TLS-terminating reverse proxy (Caddy, nginx, Traefik) in front when exposing the HTTP port off-host. The bearer alone is not a substitute for TLS.
 4. Run the MCP under a non-root account and bind to a port `>1024` so a compromise doesn't grant elevated privileges.
-5. For CI / service-account usage, prefer the env-credential path (`OPENCLAW_DEVICE_PRIVATE_KEY` + `OPENCLAW_DEVICE_TOKEN`) so the runner has no persistent secret state on disk.
+5. For CI / service-account usage, prefer the env-credential path (`OPENCLAW_DEVICE_PRIVATE_KEY` + `OPENCLAW_DEVICE_TOKEN`) so the runner has no persistent secret state on disk. On a workstation the equivalent is a `chmod 600` `.env` — the server never writes secrets to disk when the identity comes from the environment.
 6. Audit your gateway side: which device this MCP authenticates as, which scopes are granted, and whether the secrets it can read/write are restricted to what the agent actually needs.
