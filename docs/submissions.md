@@ -10,8 +10,8 @@ Action items to broadcast the package once the Phase 0 + Phase 1 renarrative is 
 | npm | https://www.npmjs.com/package/openclaw-control-mcp |
 | GitHub | https://github.com/smurfy92/openclaw-control-mcp |
 | MCP Registry id | `io.github.smurfy92/openclaw-control-mcp` |
-| Short tagline | The OpenClaw control plane MCP server — 134 typed tools |
-| Long description (~280 chars) | The OpenClaw control plane MCP server. Operate the gateway's full management surface (cron, sessions, agents, channels, skills, secrets, doctor, …) from Claude Code, Cursor, or any MCP client. 134 typed tools wrapping every published JSON-RPC method. |
+| Short tagline | The OpenClaw control plane MCP server — 143 typed tools |
+| Long description (~280 chars) | The OpenClaw control plane MCP server. Operate the gateway's full management surface (cron, sessions, agents, channels, skills, secrets, doctor, …) from Claude Code, Cursor, or any MCP client. 143 typed tools wrapping every published JSON-RPC method. |
 | Topics / tags | `mcp-server`, `openclaw`, `control-plane`, `management-plane`, `claude-code`, `cursor`, `typescript`, `devops`, `automation` |
 | License | MIT |
 | Install command | `npx -y openclaw-control-mcp` |
@@ -61,7 +61,7 @@ gh issue create \
   --body "$(cat <<'EOF'
 Hi! 👋
 
-I'm maintaining [`openclaw-control-mcp`](https://github.com/smurfy92/openclaw-control-mcp), an MCP server wrapping the OpenClaw gateway's JSON-RPC management plane — 134 typed tools across the 128 published methods (cron, sessions, agents, channels, skills, secrets, doctor, config, …).
+I'm maintaining [`openclaw-control-mcp`](https://github.com/smurfy92/openclaw-control-mcp), an MCP server wrapping the OpenClaw gateway's JSON-RPC management plane — 143 typed tools across the 128 published methods (cron, sessions, agents, channels, skills, secrets, doctor, config, …).
 
 Our scope is intentionally complementary to yours:
 
@@ -84,7 +84,7 @@ gh issue create \
   --body "$(cat <<'EOF'
 Hi! 👋
 
-I'm maintaining [`openclaw-control-mcp`](https://github.com/smurfy92/openclaw-control-mcp), an MCP server wrapping the OpenClaw gateway's JSON-RPC management plane — 134 typed tools across the 128 published methods.
+I'm maintaining [`openclaw-control-mcp`](https://github.com/smurfy92/openclaw-control-mcp), an MCP server wrapping the OpenClaw gateway's JSON-RPC management plane — 143 typed tools across the 128 published methods.
 
 Looks like our scopes overlap on agents/sessions/channels/skills with you having the FastMCP + webapp angle and ours being exhaustive on the JSON-RPC surface (crons, secrets, doctor, exec/plugin approvals, config schema, voice, doctor.memory.* …).
 

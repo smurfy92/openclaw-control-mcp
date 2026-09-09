@@ -2,6 +2,12 @@
 
 **Reported:** 2026-05-05 against `openclaw-control-mcp@0.4.3`, gateway `2026.4.12`.
 
+**Status (2026-07-28, 0.8.0):** this failure mode is **structurally gone**. ADR-006 removed the OS keychain entirely — `stripSecretsToKeychain` and `hydrateSecretsFromKeychain` no longer exist, and secrets are written straight into `store.json` (mode 0600), so there is no longer a path where the in-memory copy is blanked after a write that silently no-op'd. Everything below is kept as the historical analysis.
+
+If you hit the empty-`privateKey` symptom *after upgrading to 0.8.0*, the cause is different: your key is still in the OS keychain from 0.5.0–0.7.0. Run `npx -y openclaw-control-mcp --migrate-from-keychain` once to import it, or `openclaw_device_repair` to wipe and re-pair.
+
+---
+
 **Status (2026-05-10, 0.6.1):** the three fixes proposed below are **all shipped** — `safeSet` (fix #1) since 0.5.0, `DevicePrivateKeyMissingError` (fix #3) since 0.5.0, self-heal via `repairDevice` (fix #2) since 0.5.0. Since 0.6.1 every secret is bundled into a single keychain item (see [ADR-001 § Evolution](../adr/001-multi-instance-store-with-keychain-backed-secrets.md)) — the bundle write is gated by the same `safeSet`, so the empty-private-key class of bug is contained at the same level. The recovery procedure below remains valid if you ever wipe the keychain manually (e.g. `security delete-generic-password ...`) and the store still references the now-orphaned device.
 
 ## Symptoms

@@ -6,7 +6,7 @@
 [![license](https://img.shields.io/npm/l/openclaw-control-mcp.svg)](./LICENSE)
 [![Node](https://img.shields.io/node/v/openclaw-control-mcp.svg)](https://www.npmjs.com/package/openclaw-control-mcp)
 
-**The OpenClaw control plane MCP server.** Operate the gateway's full management surface from Claude Code, Cursor, or any MCP client — list and trigger crons, inspect sessions, configure agents and channels, manage skills and secrets, drive the doctor memory plane, pair devices, approve exec/plugin calls. **134 typed tools** covering every JSON-RPC method the gateway publishes.
+**The OpenClaw control plane MCP server.** Operate the gateway's full management surface from Claude Code, Cursor, or any MCP client — list and trigger crons, inspect sessions, configure agents and channels, manage skills and secrets, drive the doctor memory plane, pair devices, approve exec/plugin calls. **143 typed tools** covering every JSON-RPC method the gateway publishes.
 
 ![demo](docs/assets/demo.gif)
 
@@ -34,9 +34,9 @@ On first start the wrapper generates an Ed25519 device identity and surfaces a `
 
 ## Status
 
-**0.6.2** — published on npm, indexed on the official MCP Registry as `io.github.smurfy92/openclaw-control-mcp`. Multi-instance gateway configs, OS keychain-backed secret storage, 134 typed tools across the 128 published JSON-RPC methods, plus two escape hatches: `openclaw_introspect` enumerates every method/event the gateway publishes in its `hello-ok`, and `openclaw_call` lets you reach any method that doesn't have a typed wrapper yet — so new gateway endpoints are reachable without waiting on a release.
+**0.8.0** — published on npm, indexed on the official MCP Registry as `io.github.smurfy92/openclaw-control-mcp`. Multi-instance gateway configs, file-based secrets (`.env` + `store.json` mode `0600`, **no OS keychain access** — see [ADR-006](./docs/adr/006-env-file-secrets-no-keychain.md)), 143 typed tools across the 128 published JSON-RPC methods, plus two escape hatches: `openclaw_introspect` enumerates every method/event the gateway publishes in its `hello-ok`, and `openclaw_call` lets you reach any method that doesn't have a typed wrapper yet — so new gateway endpoints are reachable without waiting on a release.
 
-The Ed25519 signed handshake is verified live against gateway `2026.4.12+`. On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`) — or in the OS keychain when available — signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
+The Ed25519 signed handshake is verified live against gateway `2026.4.12+`. On first start, the wrapper generates a long-lived device identity, persists it under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (mode `0600`), signs the `connect` frame, and surfaces the resulting pairing request id so you can approve it once via the Control panel. After approval the gateway issues a device token (in `hello-ok.auth.deviceToken`) which is cached per-gateway and used on subsequent connects to grant scopes.
 
 The wire format (frame types, field names, signing canonicalisation, scopes) was reverse-engineered from the minified Control panel bundle (`/api-docs/assets/index-*.js`) and cross-checked against `openclaw/openclaw/scripts/dev/gateway-smoke.ts`. It is **not officially documented**. Behaviour may change without notice if OpenClaw updates the gateway.
 
@@ -116,6 +116,40 @@ If you prefer env vars (they take precedence over the stored config), edit `~/.c
 
 Restart Claude Code — `openclaw_cron_list` and friends will be available.
 
+## Secrets & the `.env` file
+
+The server **never touches your OS keychain** — no `security` / `secret-tool` call, no permission prompt, nothing to approve. Since 0.8.0 secrets resolve from exactly two places, in this order:
+
+| # | Source | Notes |
+|---|---|---|
+| 1 | Real environment variables | Always win. `OPENCLAW_GATEWAY_TOKEN=… npx -y openclaw-control-mcp` is a valid one-shot override. |
+| 2 | A `.env` file | Loaded into the environment at startup. Never overwrites a variable that is already set. |
+| 3 | `store.json` (mode `0600`) | What `openclaw_setup` and the pairing flow write. Plain JSON, in your config dir. |
+
+`.env` candidates, highest precedence first:
+
+1. `$OPENCLAW_ENV_FILE` — explicit path
+2. `./.env` — the directory the server is started from
+3. `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/.env`
+
+Copy [`.env.example`](./.env.example), fill it in, then `chmod 600 .env`. The server warns on stderr if the file is readable by other users. The parser is deliberately minimal — `KEY=value`, `export KEY=value`, `"quoted"`, `'''raw'''`, `#` comments — with **no variable interpolation**, so a secret is never expanded or reinterpreted.
+
+Want the server to never write a secret to disk? Put `OPENCLAW_DEVICE_PRIVATE_KEY` + `OPENCLAW_DEVICE_TOKEN` in the `.env` (get them from an already-paired install with `npx tsx scripts/export-ci-secrets.ts`). Env-supplied identity short-circuits the store entirely.
+
+`--health` reports which `.env` files were loaded and which variables they supplied.
+
+### Upgrading from 0.5.0 – 0.7.0 (keychain removal)
+
+Those versions kept secrets in the OS keychain and left blank fields in `store.json`. Run the one-shot import **once**, before your next session:
+
+```bash
+npx -y openclaw-control-mcp --migrate-from-keychain
+```
+
+It reads the keychain, writes the values into `store.json` (mode `0600`), and prints the `security delete-generic-password …` / `secret-tool clear …` commands for the now-unused items — it never deletes anything from your keychain itself. Running it twice is a no-op. This is the only code path in the package that reads a keychain at all; it is dynamically imported behind that flag and never runs on normal startup.
+
+If you'd rather not migrate, `openclaw_device_repair` wipes the orphaned device and the next connect re-pairs from scratch.
+
 ## Environment variables
 
 | Variable | Required | Description |
@@ -126,7 +160,7 @@ Restart Claude Code — `openclaw_cron_list` and friends will be available.
 | `OPENCLAW_TIMEOUT_MS` | optional | Connect / request timeout (default 30000) |
 | `OPENCLAW_DEBUG` | optional | Set to `1` to log every WS frame to stderr |
 | `OPENCLAW_CONTROL_HOME` | optional | Override the directory used to persist `store.json` (defaults to `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/`). The legacy `OPENCLAW_CLAW_HOME` is still read as a fallback. |
-| `OPENCLAW_USE_KEYCHAIN` | optional | Default ON since 0.5.0 — secrets land in the OS keychain (macOS `security`, Linux `secret-tool`) when one is available, else stay in `store.json`. Since 0.6.1 every secret is collapsed into a single keychain item (one OS prompt per process instead of 3-5). Click "Always Allow" once to clear future prompts on the same install. Set the env var to `0` or `false` to opt out and force plain JSON. |
+| `OPENCLAW_ENV_FILE` | optional | Explicit path to a `.env` file. Loaded before anything else reads the environment; takes precedence over `./.env` and `<configDir>/.env`. See [Secrets & the `.env` file](#secrets--the-env-file). |
 | `OPENCLAW_HTTP` | optional | Set to `1` to expose the MCP over Streamable HTTP at `/mcp` instead of stdio. Equivalent to passing `--http`. |
 | `OPENCLAW_HTTP_PORT` | optional | HTTP port (default `3333`). Equivalent to `--http-port=N`. |
 | `OPENCLAW_HTTP_HOST` | optional | HTTP host (default `127.0.0.1`). Equivalent to `--http-host=H`. |
@@ -221,7 +255,7 @@ All four take the standard knobs: `agentId?`, `model?`, `timeoutSeconds?` (defau
 
 ## Tools
 
-134 typed tools wrapping the **128 JSON-RPC methods** the gateway publishes (and 2 standalone introspection tools). Run `openclaw_introspect` once paired to see the live list of methods + events on your specific gateway.
+143 typed tools wrapping the **128 JSON-RPC methods** the gateway publishes (and 2 standalone introspection tools). Run `openclaw_introspect` once paired to see the live list of methods + events on your specific gateway.
 
 ### Introspection (no scopes required)
 
@@ -393,10 +427,10 @@ Most v0.3.0 wrappers use `z.passthrough()` for params — they accept the docume
 
 This MCP server exposes secret-bearing and side-effectful gateway operations (`config.*`, `secrets.*`, `cron.run`, `sessions.send`, `agent`, channel send) to an LLM that the operator drives via natural language. Treat that surface deliberately:
 
-- **The gateway token, device private key, and per-gateway device tokens** are persisted under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (file mode `0600`) and — when an OS keychain is available — bundled into one keychain item (macOS `security`, Linux libsecret). The store file alone never contains plaintext secrets when the keychain is active. Never commit the store or post screenshots of `--health` output unredacted.
+- **The gateway token, device private key, and per-gateway device tokens** are persisted under `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/store.json` (file mode `0600`). Since 0.8.0 the server **never touches your OS keychain** — no `security` / `secret-tool` call, no permission prompt. If you'd rather no secret was written to disk by the server at all, supply them via a `.env` file instead (see [Secrets & the `.env` file](#secrets--the-env-file)). Never commit the store or the `.env`, and don't post `--health` output unredacted.
 - **`openclaw_secrets_set` writes into the gateway config tree** via `config.patch`. Any tool call that reaches this wrapper rotates the underlying secret in the gateway's view. Wrap it with explicit human confirmation in agent prompts.
 - **`openclaw_call` is an escape hatch** — it forwards arbitrary JSON-RPC method calls. The gateway enforces per-scope permissions, but on the client side there's no input filter. Limit which tool catalogs your agent can see if untrusted prompts can reach it.
-- **`OPENCLAW_DEVICE_PRIVATE_KEY` / `OPENCLAW_DEVICE_TOKEN` env vars** (for headless / CI / service-account usage) take priority over the store. Set them only in trusted execution contexts (GitHub secrets, K8s secrets, password manager exports — not in shell history, Docker `--env`, or `.env` files committed to the repo).
+- **`OPENCLAW_DEVICE_PRIVATE_KEY` / `OPENCLAW_DEVICE_TOKEN` env vars** (for headless / CI / service-account usage) take priority over the store. Set them only in trusted execution contexts (GitHub secrets, K8s secrets, password manager exports, a `chmod 600` `.env` — never in shell history, Docker `--env`, or a `.env` committed to a repo).
 - **Prompt-injection surface**: the gateway's responses (session previews, logs, agent outputs) feed back into the MCP client and can carry attacker-controlled content. Treat any tool output as untrusted when deciding whether to call destructive tools (the destructive list is published in §Destructive tools — confirm before chaining a write tool to a read tool output).
 - **HTTP transport surface**: when running `--http`, the server enforces a constant-time `Bearer` check if `OPENCLAW_HTTP_BEARER` is set, refuses to bind to a non-loopback interface without one, and emits a loud stderr warning if started on loopback without one. Rotate the bearer like a gateway admin token — anything that can read it can invoke every tool, including `secrets.*` writes. Terminate TLS at a reverse proxy before exposing the HTTP port to the network.
 
@@ -420,7 +454,7 @@ If you used the wrapper under its previous name (`openclaw-claw-mcp`):
 
 ## Troubleshooting
 
-- **`gateway request '…' failed: expected Uint8Array of length 32, got length=0`** — the persisted `device.privateKey` is empty (keychain backend silently failed at `stripSecretsToKeychain`). Workaround + proposed fixes: [`docs/troubleshooting/empty-private-key.md`](./docs/troubleshooting/empty-private-key.md).
+- **`gateway request '…' failed: expected Uint8Array of length 32, got length=0`** — the persisted `device.privateKey` is empty. On 0.8.0+ the usual cause is an upgrade from 0.5.0–0.7.0 where the key still sits in the OS keychain: run `npx -y openclaw-control-mcp --migrate-from-keychain` once. Otherwise recover with `openclaw_device_repair`. Background: [`docs/troubleshooting/empty-private-key.md`](./docs/troubleshooting/empty-private-key.md).
 - **`gateway request '…' failed: device nonce mismatch`** after some idle time — the WS connection went stale and the retry loop reuses a burned nonce. Workaround: re-call `openclaw_setup` with the same params (forces a fresh handshake). Details + proposed fixes: [`docs/troubleshooting/stale-connection-nonce-mismatch.md`](./docs/troubleshooting/stale-connection-nonce-mismatch.md).
 
 ## Caveats
