@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-28
+
+### Removed
+
+- **The OS keychain is gone.** `src/gateway/keychain.ts` (macOS `security`, Linux `secret-tool`, the Noop fallback and the whole backend-resolution layer) is deleted, along with every keychain branch in `Store` — `stripSecretsToKeychain`, `hydrateSecretsFromKeychain`, the `secrets-bundle` packaging, the legacy per-item reads, the `safeSet` guard and the `{ keychain }` constructor option. `OPENCLAW_USE_KEYCHAIN` no longer exists (it is simply ignored if set). The server now makes **no OS credential-store call and triggers no permission prompt**, on any platform. Rationale in [ADR-006](docs/adr/006-env-file-secrets-no-keychain.md): the prompt was an unauditable stop sign for users installing via `npx`, while the security gain over a mode-`0600` file was marginal — against another local user, `0600` already covers it; against a process running as the user, the keychain buys nothing.
+
+### Added
+
+- **`.env` file support** (`src/gateway/env-file.ts`). Candidates, highest precedence first: `$OPENCLAW_ENV_FILE`, `./.env`, `${XDG_CONFIG_HOME:-~/.config}/openclaw-control-mcp/.env`. Values are injected into `process.env` at startup and **never overwrite** a variable already present, so a one-shot `OPENCLAW_GATEWAY_TOKEN=… npx -y openclaw-control-mcp` still wins. The parser is deliberately minimal — `KEY=value`, `export KEY=value`, double/single quotes, `#` comments — with no variable interpolation, so a secret is never expanded. A group/other-readable file produces a `chmod 600` warning on stderr without blocking startup. `.env.example` documents every supported variable and now ships in the npm tarball.
+- **`--migrate-from-keychain`** — one-shot importer for 0.5.0–0.7.0 installs whose secrets still live in the keychain. Reads the `secrets-bundle` item (or the pre-0.6.1 per-secret items), writes them into `store.json` (mode `0600`), and *prints* the `security delete-generic-password …` / `secret-tool clear …` commands rather than running them: the package never mutates or deletes anything in your keychain. Idempotent. `src/gateway/keychain-migrate.ts` is read-only, dynamically imported behind the flag, and is the only file in the package that reads a keychain at all.
+- **`Store.importSecrets()`** — fills in secret fields that are currently empty without clobbering populated ones; the seam the migration uses and a clean entry point for any future import path.
+- **`--health` now reports `envFiles`** — which `.env` files were loaded, which variables they supplied, and any permission warnings.
+
+### Changed
+
+- **Secret resolution order is now a single documented chain**: real environment variables → `.env` → `store.json` (mode `0600`). `secretsLocation` (surfaced by `openclaw_setup_show`, `openclaw_setup_list` and `--health`) reports the actual store path plus any secret-bearing env vars in play, instead of a keychain backend id. It is now synchronous.
+- `openclaw_device_repair` no longer claims to drop keychain entries — it backs up `store.json`, wipes the device + cached tokens, and keeps the gateway configs, as before.
+- `scripts/export-ci-secrets.ts` documents appending straight into a `.env`.
+
+### Documentation
+
+- New README section **Secrets & the `.env` file**, including the upgrade path from 0.5.0–0.7.0. Threat model, environment-variable table and troubleshooting entries updated; `SECURITY.md` scope now names the `.env` surface instead of keychain ACLs.
+- [ADR-006](docs/adr/006-env-file-secrets-no-keychain.md) added; ADR-001 marked as superseded on its keychain half only (the multi-instance Store design it describes is unchanged) with a 0.8.0 evolution note. ADR index now also lists ADR-005.
+- `docs/troubleshooting/empty-private-key.md` records that the failure class is structurally gone — the blank-after-silent-no-op path no longer exists — and points 0.8.0 upgraders at `--migrate-from-keychain`.
+
+### Dependencies
+
+- `@modelcontextprotocol/sdk` `1.29.0` → `1.30.0`, plus transitive bumps via `npm audit fix`. Clears the `fast-uri` (high), `hono` (moderate ×5), `ip-address`, `body-parser` and `postcss` advisories that 0.7.0 shipped with — `npm audit` goes from 7 findings to 1. The remainder is `esbuild` (low, dev-server-on-Windows only) reached through `tsup`, a devDependency that never ships in the tarball. `SECURITY.md` § Known dependency advisories updated accordingly.
+
+### Internals
+
+- Tests: `tests/keychain.test.ts` replaced by `tests/store-secrets.test.ts` (12 cases: on-disk persistence, mode 0600, env precedence, integrity/repair, `importSecrets`), `tests/env-file.test.ts` (11 cases: parser, candidate resolution, precedence, permissions warning) and `tests/keychain-migrate.test.ts` (7 cases, reader injected so no test ever touches a real keychain). 193 → 223 total.
+- `tsup` emits `keychain-migrate` as a separate chunk because it is dynamically imported — `dist/index.js` contains **zero** occurrences of `find-generic-password` / `secret-tool`. Verifiable with `grep -c "find-generic-password\|secret-tool" dist/index.js`.
+- `server.json` (MCP Registry manifest) version was stale at `0.6.0`; now tracks the package version.
+- Tool count corrected everywhere from **134** to **143** (README, `package.json` description, `docs/submissions.md`). The architectural test already asserted `>= 140`; the marketing copy had simply not been updated since the count grew.
+
 ## [0.7.0] — 2026-06-09
 
 ### Security
