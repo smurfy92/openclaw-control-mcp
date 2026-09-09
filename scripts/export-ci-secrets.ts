@@ -1,10 +1,12 @@
-// Read device + token + gateway-token out of the local Store (incl. keychain
-// bundle) and print them in a format suitable for piping into `gh secret set`.
+// Read device + token + gateway-token out of the local Store (store.json) and
+// print them in a format suitable for piping into `gh secret set` — or into a
+// `.env` file (see .env.example).
 //
 // Usage:
 //   npx tsx scripts/export-ci-secrets.ts                # KEY=value lines on stdout
 //   npx tsx scripts/export-ci-secrets.ts --shell        # `export KEY=value` lines (eval-friendly)
 //   npx tsx scripts/export-ci-secrets.ts --instance default
+//   npx tsx scripts/export-ci-secrets.ts >> ~/.config/openclaw-control-mcp/.env
 //
 // The output contains secrets — pipe it, don't tee it into a file you keep.
 

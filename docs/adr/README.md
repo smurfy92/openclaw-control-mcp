@@ -14,14 +14,16 @@ alternatives considered.
 
 | # | Title | File anchored |
 |---|---|---|
-| [001](001-multi-instance-store-with-keychain-backed-secrets.md) | Multi-instance Store with keychain-backed secrets | `src/gateway/store.ts` |
+| [001](001-multi-instance-store-with-keychain-backed-secrets.md) | Multi-instance Store (keychain half superseded by 006) | `src/gateway/store.ts` |
 | [002](002-toolclient-interface-as-the-integration-boundary.md) | `ToolClient` interface as the integration boundary | `src/tools/client.ts` |
 | [003](003-single-process-shim-with-per-instance-client-cache.md) | Single-process shim with per-instance client cache | `src/index.ts` |
 | [004](004-introspect-and-call-as-the-escape-hatch.md) | `openclaw_introspect` + `openclaw_call` as the escape hatch | `src/tools/introspect.ts` |
+| [005](005-http-streamable-transport.md) | Streamable HTTP transport | `src/index.ts` |
+| [006](006-env-file-secrets-no-keychain.md) | File-based secrets (`.env` + `store.json`), no OS keychain | `src/gateway/env-file.ts` |
 
-## Why these four files
+## Why these files
 
-`codegraph-toolkit` flagged them as **articulation points** in the dependency
+`codegraph-toolkit` flagged the first four as **articulation points** in the dependency
 graph — files where a bug or breaking change cascades to multiple downstream
 files. Articulation points without a documented rationale are a tech-debt
 signal. Each ADR explains the trade-off explicitly so future contributors

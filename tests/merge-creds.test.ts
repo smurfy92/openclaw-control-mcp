@@ -12,7 +12,7 @@ describe("mergeCreds — env wins per field", () => {
 
   it("env token wins over EMPTY store value (post-wipe scenario)", () => {
     // The bug from 2026-05-10: store had `gatewayToken: ""` after a manual
-    // keychain wipe; the pre-0.6.2 code used `cfg.gatewayToken` directly, so
+    // wipe; the pre-0.6.2 code used `cfg.gatewayToken` directly, so
     // ENV_TOKEN was silently ignored and the gateway received auth: {}.
     const r = mergeCreds(
       { token: "ENV-T", password: undefined },

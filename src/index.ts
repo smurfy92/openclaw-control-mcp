@@ -13,6 +13,7 @@ import {
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { formatAgo } from "./format.js";
 import { GatewayClient, GatewayError, redactSecrets } from "./gateway/client.js";
+import { loadEnvFiles, type EnvFileLoadResult } from "./gateway/env-file.js";
 import { MockGateway } from "./gateway/mock.js";
 import { mergeCreds, Store } from "./gateway/store.js";
 import type { CallOpts, ToolClient } from "./tools/client.js";
@@ -43,6 +44,13 @@ import { buildTtsTools } from "./tools/tts.js";
 import { buildUsageTools } from "./tools/usage.js";
 import { buildVoicewakeTools } from "./tools/voicewake.js";
 import { buildWizardTools } from "./tools/wizard.js";
+
+// Load `.env` before anything reads process.env below. Real environment
+// variables always win over file values — see src/gateway/env-file.ts.
+// Caveat: OPENCLAW_CONTROL_HOME / XDG_CONFIG_HOME decide *where* the file is
+// looked up, so they only work as real env vars, never from inside the file.
+const ENV_FILES: EnvFileLoadResult = loadEnvFiles();
+for (const w of ENV_FILES.warnings) process.stderr.write(`openclaw-control-mcp: ${w}\n`);
 
 const ENV_URL = process.env.OPENCLAW_GATEWAY_URL?.trim() || undefined;
 const ENV_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
@@ -300,6 +308,16 @@ async function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+// CLI flag: one-shot import of secrets left in the OS keychain by 0.5.0-0.7.0.
+// Read-only on the keychain side — it prints the delete commands rather than
+// running them. This is the only code path that touches a keychain at all.
+if (process.argv.includes("--migrate-from-keychain")) {
+  const { migrateFromKeychain } = await import("./gateway/keychain-migrate.js");
+  const report = await migrateFromKeychain(store);
+  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+
 // CLI flag: `npx -y openclaw-control-mcp --health` runs a one-shot diagnostic
 // then exits — does NOT start a server. Useful for `is everything OK?`
 // without wiring the MCP into a client.
@@ -441,6 +459,7 @@ async function runHealthDiagnostic() {
     gatewayUrl: string | null;
     tokenSet: boolean;
     secretsLocation: string;
+    envFiles: { loaded: string[]; applied: string[]; warnings: string[] };
     paired: boolean;
     scopes: string[];
     server: { version?: string; connId?: string } | null;
@@ -452,7 +471,12 @@ async function runHealthDiagnostic() {
     mcpVersion: getMcpVersion(),
     gatewayUrl: url,
     tokenSet,
-    secretsLocation: await store.secretsLocation(),
+    secretsLocation: store.secretsLocation(),
+    envFiles: {
+      loaded: ENV_FILES.loaded,
+      applied: ENV_FILES.applied,
+      warnings: ENV_FILES.warnings,
+    },
     paired: false,
     scopes: [],
     server: null,

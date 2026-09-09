@@ -39,7 +39,7 @@ import { makeMockClient } from "./helpers/mock-client.js";
  */
 function buildAllTools(): ToolDef[] {
   const { client } = makeMockClient();
-  const store = new Store("/tmp/__architectural-test__", "store.json", { keychain: null });
+  const store = new Store("/tmp/__architectural-test__", "store.json");
   const setupHooks = {
     reconfigure: async () => {},
     envOverride: () => ({ gatewayUrl: undefined, tokenSet: false, passwordSet: false }),
@@ -167,7 +167,7 @@ describe("architectural — instance arg passes through correctly", () => {
   it("a sample of gateway-routed tools forward `instance` to client.request opts", async () => {
     // Build a fresh set with a captured stub so we can inspect calls.
     const { client, calls } = makeMockClient();
-    const store = new Store("/tmp/__architectural-test-2__", "store.json", { keychain: null });
+    const store = new Store("/tmp/__architectural-test-2__", "store.json");
     const sample = [
       ...buildCronTools(client),
       ...buildSessionsTools(client),
