@@ -41,6 +41,11 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
 
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1. Node 22 ships npm 10.x,
+      # which silently falls back to the placeholder NODE_AUTH_TOKEN and gets a 404
+      # on PUT (v0.7.0 on 2026-06-09 and v0.8.0 on 2026-09-10 both failed this way).
+      - run: npm install -g npm@latest && npm --version
+
       - run: npm ci
 
       - run: npm run typecheck
