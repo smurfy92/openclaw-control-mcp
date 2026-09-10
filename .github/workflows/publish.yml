@@ -44,7 +44,8 @@ jobs:
       # Trusted Publishing (OIDC) requires npm >= 11.5.1. Node 22 ships npm 10.x,
       # which silently falls back to the placeholder NODE_AUTH_TOKEN and gets a 404
       # on PUT (v0.7.0 on 2026-06-09 and v0.8.0 on 2026-09-10 both failed this way).
-      - run: npm install -g npm@latest && npm --version
+      # Épinglé sur la version qui a publié 0.8.0 (run 34477462252). Monter volontairement.
+      - run: npm install -g npm@12.0.2 && npm --version
 
       - run: npm ci
 
