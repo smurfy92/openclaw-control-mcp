@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `npm audit` ramené à 0 (avant : 1 high, 4 moderate, 1 low) par mise à jour du seul `package-lock.json`, sans changement de `package.json`. Transitives runtime via `@modelcontextprotocol/sdk` (inchangé en 1.30.0, dernière version) : `hono` 4.12.32 → 4.13.7, `qs` 6.15.2 → 6.16.0. Dev : `vitest`/`@vitest/mocker` 4.1.5 → 4.1.11 (GHSA-82fw-gwwq-j7x9), `nanoid` 3.3.16 → 3.3.19 (via tsup/postcss, GHSA-2v37-7h3g-55p8), `esbuild` 0.27.7 → 0.27.2 (hors plage vulnérable `>=0.27.3 <0.28.1` de GHSA-g7r4-m6w7-qqqr ; tsup `^0.27.0` et tsx `~0.27.0` ne permettent pas 0.28.1 sans override). Aucune de ces bibliothèques n'est atteignable en mode stdio.
+
 ## [0.8.0] — 2026-07-28
 
 ### Removed
