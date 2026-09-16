@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dev
+
+- `vitest` migré de `^4.1.5` (résolu 4.1.11) à `^5.0.1`. Aucun changement de configuration ni de test nécessaire : la suite n'utilise ni `vi.mock`, ni `vi.fn`, ni faux timers, et Vite 8.3.0 (≥ 6.4 requis) était déjà résolu. Node ≥ 22.12 requis par Vitest 5, couvert par `engines.node >=22` et la CI Node 22/24. Aucune dépendance de production touchée.
+
 ## [0.8.1] — 2026-09-14
 
 ### Security
