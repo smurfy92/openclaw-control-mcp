@@ -438,11 +438,11 @@ If you find a vulnerability, please open a private security advisory on GitHub r
 
 ## Roadmap
 
-- Auto-reconnect with backoff (currently single-shot — Claude Code respawns the stdio process on demand).
-- Stream session messages back into the MCP client (currently `sessions.subscribe` registers server-side but stdio can't surface deltas to Claude Code).
-- Tighten Zod schemas for the wrappers added in 0.3.0 — most use `passthrough()` until the gateway shape for each domain is fully nailed down. PRs welcome.
-- HTTP / SSE transport in addition to stdio, to enable Cursor remote and Claude.ai web custom-connector use.
-- Claude Desktop Extension (`.mcpb`) packaging.
+- [x] Auto-reconnect with exponential backoff — shipped in 0.3.1 (`client.request()` retries with jitter; tunable via `OPENCLAW_RETRY_ATTEMPTS` / `OPENCLAW_RETRY_BASE_MS` since 0.4.0).
+- [ ] Stream session messages back into the MCP client (currently `sessions.subscribe` registers server-side but stdio can't surface deltas to Claude Code).
+- [ ] Tighten Zod schemas for the wrappers added in 0.3.0 — most use `passthrough()` until the gateway shape for each domain is fully nailed down. PRs welcome.
+- [x] Streamable HTTP transport in addition to stdio — shipped in 0.5.0 (`--http`, `http://127.0.0.1:3333/mcp`), bearer-token auth added in 0.7.0 (`OPENCLAW_HTTP_BEARER`). See [ADR-005](./docs/adr/005-http-streamable-transport.md).
+- [ ] Claude Desktop Extension (`.mcpb`) packaging.
 
 ## Migrating from openclaw-claw-mcp (early adopters)
 
