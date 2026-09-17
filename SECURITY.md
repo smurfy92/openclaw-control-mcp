@@ -31,13 +31,11 @@ Out-of-scope (please don't report as a security issue):
 
 ## Known dependency advisories
 
-As of 2026-07-28 (`0.8.0`), `@modelcontextprotocol/sdk` is on `1.30.0`, which clears the `fast-uri`, `hono` and `ip-address` advisories that 0.7.0 shipped with. `npm audit` now surfaces a single remaining item:
+As of 2026-09-17 (`0.8.1`), there are **no open advisories**: both `npm audit` and `npm audit --omit=dev` report `found 0 vulnerabilities`.
 
-| Package | Severity | Path | Applies to us? | Tracker |
-|---|---|---|---|---|
-| `esbuild` | low | `tsup → esbuild` (devDependency) | No — dev-server-on-Windows only, never runs in the published package | <https://github.com/advisories/GHSA-g7r4-m6w7-qqqr> |
+`0.8.1` got there with a lock-only update (no `package.json` change). `@modelcontextprotocol/sdk` stays on `1.30.0` (latest); its runtime transitives resolve to `hono` `4.13.7` and `qs` `6.16.0` via `package-lock.json`. On the dev side, `esbuild` (reached through `tsup` / `tsx`) resolves to `0.27.2`, outside the vulnerable range of GHSA-g7r4-m6w7-qqqr, so the low-severity item that `0.8.0` shipped with is gone. Build-time dependencies never reach the published tarball anyway (`files` ships `dist` only).
 
-`esbuild` is a build-time dependency and is not part of the published tarball (`files` ships `dist` only). We bump dependencies as patched releases appear.
+We bump dependencies as patched releases appear and refresh this section on every release.
 
 ## Hardening recommendations for operators
 
