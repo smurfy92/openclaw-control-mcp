@@ -279,20 +279,38 @@ export class GatewayClient {
       const ws = new WebSocket(this.opts.url, { handshakeTimeout: this.opts.timeoutMs });
       this.ws = ws;
 
+      // `settled` guards against double-resolution: the open promise is fulfilled
+      // exactly once (open, timeout, or a pre-open socket error), while the
+      // `error` listener below stays installed for the whole life of the socket.
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+
       const timer = setTimeout(() => {
-        reject(new Error(`ws open timeout after ${this.opts.timeoutMs}ms`));
+        settle(() => reject(new Error(`ws open timeout after ${this.opts.timeoutMs}ms`)));
         ws.close();
       }, this.opts.timeoutMs);
 
       ws.once("open", () => {
-        clearTimeout(timer);
-        this.log(`socket open`);
-        resolve();
+        settle(() => {
+          this.log(`socket open`);
+          resolve();
+        });
       });
-      ws.once("error", (err) => {
-        clearTimeout(timer);
-        this.log(`socket error: ${err.message}`);
-        reject(err instanceof Error ? err : new Error(String(err)));
+      // PERSISTENT listener (not `once`): after `open`, a socket-level error
+      // such as ECONNRESET is still emitted on this emitter. Without a live
+      // `error` listener, EventEmitter rethrows it as an uncaught exception and
+      // kills the MCP server process. Here it is only logged — `ws` always
+      // emits `close` after `error`, and the `close` handler below does the
+      // `flushPending`, so the retry loop in `request()` handles the recovery.
+      ws.on("error", (err) => {
+        const error = err instanceof Error ? err : new Error(String(err));
+        this.log(`socket error: ${error.message}`);
+        settle(() => reject(error));
       });
       ws.on("message", (data) => this.handleMessage(data.toString("utf8")));
       ws.on("close", (code, reason) => {

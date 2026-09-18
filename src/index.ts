@@ -106,7 +106,21 @@ async function ensureClient(instance?: string): Promise<{ client: GatewayClient;
   }
   let client = clients.get(resolvedName);
   if (!client) {
-    client = new GatewayClient({ url, token, password, timeoutMs: TIMEOUT, store, debug });
+    // The gateway identifies a device by its Ed25519 key (`device.id` +
+    // signature over deviceId|clientId|clientMode|role|scopes|signedAt|token|nonce,
+    // see buildSigningString in gateway/device.ts) — `client.displayName` is
+    // cosmetic and is not part of the signed material, so fixing the stale
+    // default cannot invalidate an existing pairing.
+    client = new GatewayClient({
+      url,
+      token,
+      password,
+      clientName: "openclaw-control-mcp",
+      clientVersion: getMcpVersion(),
+      timeoutMs: TIMEOUT,
+      store,
+      debug,
+    });
     clients.set(resolvedName, client);
   }
   activeInstance = resolvedName;

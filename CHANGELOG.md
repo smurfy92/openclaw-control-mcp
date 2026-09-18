@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The WebSocket `error` listener is now persistent for the whole life of the socket** (`src/gateway/client.ts`, `waitOpen`). It used to be a `ws.once("error", …)` installed only to settle the open promise: once it had fired — typically on a post-handshake `ECONNRESET` — the socket was left with **no** `error` listener, and any further `error` event became an uncaught exception that killed the MCP server process. The listener now only logs; `close` keeps doing the `flushPending`, so the retry loop in `request()` re-handshakes on the next call as it already did. A `settled` guard keeps the open promise single-shot: an error before `open` still rejects it cleanly, an error after `open` no longer rejects an already-resolved promise.
+- **A corrupted `store.json` is moved aside instead of being silently overwritten** (`src/gateway/store.ts`, `readShape`). An unreadable file, invalid JSON or an unknown `version` used to return `null` from an empty `catch`, which made the store look empty — and the next save then destroyed the device private key, the cached gateway tokens and the stored secrets with no backup and no message. A missing file is still the normal "fresh install" case (silent `null`); a present-but-unusable file is now renamed to `store.json.corrupt-<timestamp>` (the `rename` preserves mode `0600`; `openclaw_device_repair` keeps its own distinct `store.json.bak.<timestamp>` naming for deliberate backups) with a warning on stderr that names the path and the reason class but never echoes any file content. Only the primary store is quarantined — the legacy `~/.config/openclaw-claw-mcp/store.json` is read-only for us and just produces a warning.
+
+### Changed
+
+- **The client identity sent to the gateway is the real one** (`src/index.ts`): `clientName: "openclaw-control-mcp"` and `clientVersion` read from `package.json` via `getMcpVersion()`. The constructor defaults (`openclaw-claw-mcp` / `0.1.0`) were still going on the wire, so the Control panel showed the pre-rename package under a version that has never existed. This cannot invalidate an existing pairing: the gateway identifies a device by its Ed25519 key, and the signed material is `deviceId|clientId|clientMode|role|scopes|signedAt|token|nonce` (`buildSigningString`) — `client.displayName` is cosmetic and unsigned.
+
 ### Dev
+
+- **Fake gateway for the handshake tests** (`tests/helpers/fake-gateway.ts`): an in-process `ws` server on `127.0.0.1:0` that emits `connect.challenge`, answers `connect` with a `hello-ok`-shaped payload, and can drop the socket (RST or clean close) or hang a request on demand. No real gateway is ever contacted and every test store lives in a `mkdtemp` directory.
+- **19 new tests** (223 → 242): signed handshake end to end (signature verified against the device public key, device token persisted), socket error after open without an uncaught exception and with the pending request rejected, reconnection on the next call, retry-then-success; store absent / invalid JSON / unknown version / valid / v1-migrated, and the proof that a save no longer clobbers a corrupted store; plus 9 cases on `redactSecrets` / `redactSecretsString` (nested keys, arrays, case-insensitivity, non-mutation, primitives, invalid JSON).
 
 - `vitest` migré de `^4.1.5` (résolu 4.1.11) à `^5.0.1`. Aucun changement de configuration ni de test nécessaire : la suite n'utilise ni `vi.mock`, ni `vi.fn`, ni faux timers, et Vite 8.3.0 (≥ 6.4 requis) était déjà résolu. Node ≥ 22.12 requis par Vitest 5, couvert par `engines.node >=22` et la CI Node 22/24. Aucune dépendance de production touchée.
 
