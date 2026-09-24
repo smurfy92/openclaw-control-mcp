@@ -1,7 +1,7 @@
 // ADR-001 — Multi-instance Store with keychain-backed secrets (keychain part superseded by ADR-006).
 // See docs/adr/001-multi-instance-store-with-keychain-backed-secrets.md.
 // ADR-006 — File-based secrets (.env + store.json), no OS keychain. See docs/adr/006-env-file-secrets-no-keychain.md.
-import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
@@ -118,7 +118,9 @@ export class Store {
   }
 
   async load(): Promise<StoreShape> {
-    const primary = await this.readShape(this.path);
+    // Only the primary path is quarantined on corruption: it is the one `save()`
+    // overwrites. The legacy path is read-only for us, so a warning is enough.
+    const primary = await this.readShape(this.path, true);
     const legacy =
       LEGACY_DIR !== dirname(this.path) ? await this.readShape(join(LEGACY_DIR, "store.json")) : null;
     let state: StoreShape;
@@ -152,14 +154,76 @@ export class Store {
     return state;
   }
 
-  private async readShape(path: string): Promise<StoreShape | null> {
+  /**
+   * Read one store file. Distinguishes two very different situations that used
+   * to be conflated into a silent `null`:
+   *
+   *   - **file absent** (fresh install, or no legacy store): normal, returns
+   *     `null`, the caller starts from an empty store.
+   *   - **file present but unusable** (unreadable, invalid JSON, or an unknown
+   *     `version`): returning `null` would make the next `save()` overwrite the
+   *     device private key, the gateway tokens and the stored secrets with no
+   *     trace. When `quarantine` is set, the file is renamed to
+   *     `<path>.corrupt-<timestamp>` (keeping its mode, `rename` preserves it)
+   *     and a warning goes to stderr before we continue with an empty store, so
+   *     the operator can still recover the secrets by hand.
+   *
+   * The warning never includes any file content — only the path, the reason
+   * class and the byte size.
+   */
+  private async readShape(path: string, quarantine = false): Promise<StoreShape | null> {
+    let raw: string;
     try {
-      const raw = await readFile(path, "utf8");
-      const parsed = JSON.parse(raw) as StoreShape;
-      // Accept any known version. v1 (legacy single-config) is migrated by load().
-      return parsed?.version === 1 || parsed?.version === 2 ? parsed : null;
-    } catch {
+      raw = await readFile(path, "utf8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null; // normal: no store yet
+      await this.quarantineStore(path, `unreadable (${code ?? "unknown error"})`, quarantine);
       return null;
+    }
+
+    let parsed: StoreShape | undefined;
+    try {
+      parsed = JSON.parse(raw) as StoreShape;
+    } catch {
+      await this.quarantineStore(path, `invalid JSON (${raw.length} bytes)`, quarantine);
+      return null;
+    }
+
+    // Accept any known version. v1 (legacy single-config) is migrated by load().
+    if (parsed?.version === 1 || parsed?.version === 2) return parsed;
+    await this.quarantineStore(
+      path,
+      `unknown store version (${JSON.stringify(parsed?.version) ?? "undefined"})`,
+      quarantine,
+    );
+    return null;
+  }
+
+  /**
+   * Move a damaged store aside so the next `save()` cannot silently destroy it.
+   * Best-effort: if the rename fails we still warn — the caller continues with
+   * an empty store either way. `device_repair` uses `store.json.bak.<ts>` for
+   * its own deliberate backups; corruption quarantine uses a distinct
+   * `store.json.corrupt-<ts>` suffix so the two cases stay distinguishable.
+   */
+  private async quarantineStore(path: string, reason: string, quarantine: boolean): Promise<void> {
+    if (!quarantine) {
+      process.stderr.write(`[openclaw] warning: ignoring legacy store '${path}': ${reason}\n`);
+      return;
+    }
+    const target = `${path}.corrupt-${Date.now()}`;
+    try {
+      await rename(path, target);
+      process.stderr.write(
+        `[openclaw] warning: store '${path}' is ${reason}; moved to '${target}' and continuing with an empty store. ` +
+          `Recover the device private key / tokens from that file if you need them.\n`,
+      );
+    } catch (err) {
+      process.stderr.write(
+        `[openclaw] warning: store '${path}' is ${reason} and could not be moved aside ` +
+          `(${(err as Error).message}); continuing with an empty store — the next save will overwrite it.\n`,
+      );
     }
   }
 
