@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### CI
+
+- **`publish.yml` now also publishes `server.json` to the official MCP Registry** after a successful `npm publish`, authenticated with `mcp-publisher login github-oidc` (no secret: the job already had `id-token: write`). `mcp-publisher` is pinned to 1.8.1 and its archive checked against the release sha256. A new pre-publish step fails the job if `server.json` (`name`, `version`, `packages[0]`) drifts from `package.json` (`mcpName`, `version`, `name`), and `mcp-publisher validate` runs before anything is published. The registry had been stuck at 0.6.0 because this step was manual; the manual catch-up for 0.8.2 is documented in `CONTRIBUTING.md`.
+
 ## [0.8.2] — 2026-09-24
 
 ### Fixed

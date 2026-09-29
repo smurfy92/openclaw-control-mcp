@@ -17,6 +17,14 @@
 #   - git tag v0.7.0 && git push --tags
 #   - workflow runs, publishes with provenance attestation
 #   - no OTP prompt, no token to rotate
+#
+# After a successful npm publish, the same job publishes server.json to the
+# official MCP Registry (io.github.smurfy92/openclaw-control-mcp) with
+# `mcp-publisher login github-oidc`: the registry exchanges the GitHub OIDC
+# token (id-token: write, already granted below) and grants publish rights on
+# io.github.<repository_owner>/*. No secret involved. The registry checks that
+# the npm package exists and that its package.json `mcpName` equals the
+# server.json `name`, hence the ordering. See CONTRIBUTING.md > Release.
 
 name: publish
 
@@ -68,4 +76,68 @@ jobs:
           fi
           echo "version match: $PKG"
 
-      - run: npm publish --provenance --access public
+      - name: Verify server.json matches package.json
+        shell: bash
+        run: |
+          PKG_VERSION=$(jq -r .version package.json)
+          PKG_NAME=$(jq -r .name package.json)
+          MCP_NAME=$(jq -r .mcpName package.json)
+          SRV_NAME=$(jq -r .name server.json)
+          SRV_VERSION=$(jq -r .version server.json)
+          SRV_PKG_ID=$(jq -r '.packages[0].identifier' server.json)
+          SRV_PKG_VERSION=$(jq -r '.packages[0].version' server.json)
+          fail=0
+          [ "$MCP_NAME" = "$SRV_NAME" ] || { echo "package.json mcpName=$MCP_NAME != server.json name=$SRV_NAME" >&2; fail=1; }
+          [ "$SRV_VERSION" = "$PKG_VERSION" ] || { echo "server.json version=$SRV_VERSION != package.json version=$PKG_VERSION" >&2; fail=1; }
+          [ "$SRV_PKG_VERSION" = "$PKG_VERSION" ] || { echo "server.json packages[0].version=$SRV_PKG_VERSION != package.json version=$PKG_VERSION" >&2; fail=1; }
+          [ "$SRV_PKG_ID" = "$PKG_NAME" ] || { echo "server.json packages[0].identifier=$SRV_PKG_ID != package.json name=$PKG_NAME" >&2; fail=1; }
+          exit $fail
+
+      # mcp-publisher (official MCP Registry CLI), pinned by version AND by the
+      # sha256 published in registry_<version>_checksums.txt of the GitHub
+      # release. Bump both together, on purpose: the registry rejects binaries
+      # that are too old ("invalid audience"), so a login failure after a
+      # registry deployment usually means "bump this pin".
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.1"
+          MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$ARCHIVE" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/${ARCHIVE}"
+          echo "${MCP_PUBLISHER_SHA256}  $RUNNER_TEMP/$ARCHIVE" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$ARCHIVE" -C "$RUNNER_TEMP" mcp-publisher
+          "$RUNNER_TEMP/mcp-publisher" --version
+
+      # Read-only check against the registry's /v0/validate endpoint, before
+      # anything is published anywhere.
+      - name: Validate server.json against the MCP Registry
+        run: '"$RUNNER_TEMP/mcp-publisher" validate server.json'
+
+      - name: Publish to npm
+        id: npm-publish
+        run: npm publish --provenance --access public
+
+      # Only runs when npm publish succeeded: the registry verifies that the npm
+      # package version exists and that its mcpName matches server.json.
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        if: ${{ success() && steps.npm-publish.outcome == 'success' }}
+        run: '"$RUNNER_TEMP/mcp-publisher" login github-oidc'
+
+      # Retries cover the short window where the freshly published npm version
+      # is not yet visible to the registry's package validation.
+      - name: Publish to MCP Registry
+        if: ${{ success() && steps.npm-publish.outcome == 'success' }}
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if "$RUNNER_TEMP/mcp-publisher" publish server.json; then
+              exit 0
+            fi
+            echo "mcp-publisher publish failed (attempt $attempt/3), retrying in 30s" >&2
+            sleep 30
+          done
+          exit 1
