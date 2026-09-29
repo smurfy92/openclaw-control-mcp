@@ -73,6 +73,8 @@ npm run build
 claude mcp add openclaw-control -- node "$(pwd)/dist/index.js"
 ```
 
+Releasing (npm + official MCP Registry, both from `.github/workflows/publish.yml` on a `v*.*.*` tag) is documented in [CONTRIBUTING.md](./CONTRIBUTING.md#release).
+
 ## Configuration
 
 The wrapper requires the **WebSocket** URL of your OpenClaw gateway. The public Hostinger HTTPS hostname does not expose the WS endpoint — you need the URL the Control panel itself uses internally.
