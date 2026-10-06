@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-10-06
+
+### Security
+
+- `npm audit` ramené à 0 (avant : 1 critical, 1 high, 2 moderate) par mise à jour du seul `package-lock.json`, sans changement de `package.json` ni de dépendance directe. Transitives runtime via `@modelcontextprotocol/sdk` (inchangé en 1.30.0) : `fast-uri` 3.1.7 → 3.1.8 (via `ajv`, GHSA-hrr3-gc8f-f4qj), `ip-address` 10.7.0 → 10.7.3 (via `express-rate-limit`, GHSA-j6r3-76f7-8jcv, GHSA-h3mg-xc3c-68pw), `proxy-addr` 2.0.7 → 2.0.8 (via `express`, GHSA-jqcg-44mw-7w3h). Dev : `source-map-js` 1.2.1 → 1.2.2 (via tsup/postcss, GHSA-68fv-2mgg-jv7q). Le transport HTTP de ce serveur repose sur `node:http`, pas sur `express` : `proxy-addr` et `ip-address` ne sont pas atteignables, ni en stdio ni en HTTP.
+
 ### CI
 
 - **`publish.yml` now also publishes `server.json` to the official MCP Registry** after a successful `npm publish`, authenticated with `mcp-publisher login github-oidc` (no secret: the job already had `id-token: write`). `mcp-publisher` is pinned to 1.8.1 and its archive checked against the release sha256. A new pre-publish step fails the job if `server.json` (`name`, `version`, `packages[0]`) drifts from `package.json` (`mcpName`, `version`, `name`), and `mcp-publisher validate` runs before anything is published. The registry had been stuck at 0.6.0 because this step was manual; the manual catch-up for 0.8.2 is documented in `CONTRIBUTING.md`.
